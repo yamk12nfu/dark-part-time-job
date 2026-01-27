@@ -42,48 +42,82 @@ pane_total=$((2 + worker_count))
 
 tmux new-session -d -s "$session_name" -n main
 
-for _ in $(seq 2 "$pane_total"); do
-  tmux split-window -t "$session_name":0
+# Layout:
+# - left 50%: top 60% oyabun, bottom 40% waka
+# - right 50%: workers stacked
+tmux split-window -h -p 50 -t "$session_name":0
+
+# Build right column workers by repeatedly splitting the top-right pane.
+for i in $(seq 2 "$worker_count"); do
+  tmux split-window -v -t "$session_name":0.1
 done
-tmux select-layout -t "$session_name":0 tiled
+
+# Split left column for oyabun (top) and waka (bottom).
+tmux split-window -v -p 40 -t "$session_name":0.0
 
 pane_map="$repo_root/.yamibaito/panes.json"
-cat > "$pane_map" <<EOF
-{
-  "session": "${session_name}",
-  "repo_root": "${repo_root}",
-  "waka": "0.0",
-  "oyabun": "0.1",
-  "workers": {
-EOF
 
-for i in $(seq 1 "$worker_count"); do
-  worker_id=$(printf "worker_%03d" "$i")
-  pane_index=$((1 + i))
-  sep=","
-  if [ "$i" -eq "$worker_count" ]; then
-    sep=""
-  fi
-  echo "    \"${worker_id}\": \"0.${pane_index}\"${sep}" >> "$pane_map"
-done
-cat >> "$pane_map" <<'EOF'
-  }
+SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" python3 - <<'PY'
+import json
+import os
+import subprocess
+
+session = os.environ["SESSION_NAME"]
+repo_root = os.environ["REPO_ROOT"]
+worker_count = int(os.environ["WORKER_COUNT"])
+pane_map = os.environ["PANE_MAP"]
+
+raw = subprocess.check_output(
+    ["tmux", "list-panes", "-t", f"{session}:0", "-F", "#{pane_index} #{pane_left} #{pane_top} #{pane_height} #{pane_width}"],
+    text=True,
+)
+panes = []
+for line in raw.strip().splitlines():
+    idx, left, top, height, width = line.split()
+    panes.append({
+        "index": int(idx),
+        "left": int(left),
+        "top": int(top),
+        "height": int(height),
+        "width": int(width),
+    })
+
+left_panes = [p for p in panes if p["left"] == 0]
+right_panes = [p for p in panes if p["left"] != 0]
+
+left_panes.sort(key=lambda p: p["top"])
+right_panes.sort(key=lambda p: p["top"])
+
+oyabun = left_panes[0]["index"] if left_panes else 0
+waka = left_panes[1]["index"] if len(left_panes) > 1 else 0
+
+workers = {}
+for i in range(worker_count):
+    if i < len(right_panes):
+        workers[f"worker_{i+1:03d}"] = f"0.{right_panes[i]['index']}"
+
+mapping = {
+    "session": session,
+    "repo_root": repo_root,
+    "oyabun": f"0.{oyabun}",
+    "waka": f"0.{waka}",
+    "workers": workers,
 }
-EOF
 
-tmux select-pane -t "$session_name":0.0 -T "waka"
-tmux select-pane -t "$session_name":0.1 -T "oyabun"
-tmux select-pane -t "$session_name":0.0 -P 'bg=#1b2f2a'
-tmux select-pane -t "$session_name":0.1 -P 'bg=#2f1b1b'
+with open(pane_map, "w", encoding="utf-8") as f:
+    json.dump(mapping, f, ensure_ascii=False, indent=2)
 
-for i in $(seq 1 "$worker_count"); do
-  pane_index=$((1 + i))
-  worker_id=$(printf "worker_%03d" "$i")
-  tmux select-pane -t "$session_name":0.$pane_index -T "$worker_id"
-done
+subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{oyabun}", "-T", "oyabun"], check=False)
+subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{waka}", "-T", "waka"], check=False)
+subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{oyabun}", "-P", "bg=#2f1b1b"], check=False)
+subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{waka}", "-P", "bg=#1b2f2a"], check=False)
 
-for i in $(seq 0 $((pane_total - 1))); do
-  tmux send-keys -t "$session_name":0.$i "cd \"$repo_root\" && clear" C-m
+for name, pane in workers.items():
+    subprocess.run(["tmux", "select-pane", "-t", f"{session}:{pane}", "-T", name], check=False)
+PY
+
+for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
+  tmux send-keys -t "$session_name":0."$pane" "cd \"$repo_root\" && clear" C-m
 done
 
 tmux send-keys -t "$session_name":0.1 "claude --dangerously-skip-permissions" C-m

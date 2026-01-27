@@ -66,6 +66,18 @@ session = os.environ["SESSION_NAME"]
 repo_root = os.environ["REPO_ROOT"]
 worker_count = int(os.environ["WORKER_COUNT"])
 pane_map = os.environ["PANE_MAP"]
+worker_names = [
+    "銀次",
+    "龍",
+    "影",
+    "蓮",
+    "玄",
+    "隼",
+    "烈",
+    "咲",
+    "凪",
+    "朔",
+]
 
 raw = subprocess.check_output(
     ["tmux", "list-panes", "-t", f"{session}:0", "-F", "#{pane_index} #{pane_left} #{pane_top} #{pane_height} #{pane_width}"],
@@ -113,7 +125,12 @@ subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{oyabun}", "-P", "bg=
 subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{waka}", "-P", "bg=#1b2f2a"], check=False)
 
 for name, pane in workers.items():
-    subprocess.run(["tmux", "select-pane", "-t", f"{session}:{pane}", "-T", name], check=False)
+    try:
+        idx = int(name.split("_")[1]) - 1
+    except (IndexError, ValueError):
+        idx = -1
+    label = worker_names[idx] if 0 <= idx < len(worker_names) else name
+    subprocess.run(["tmux", "select-pane", "-t", f"{session}:{pane}", "-T", label], check=False)
 PY
 
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do

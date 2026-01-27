@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euo pipefail
+
+ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+yb - yamibaito orchestrator
+
+Usage:
+  yb init [--repo <path>]
+  yb start [--repo <path>]
+  yb dispatch [--repo <path>]
+  yb collect [--repo <path>]
+  yb help
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  init)
+    "$ORCH_ROOT/scripts/yb_init_repo.sh" "$@"
+    ;;
+  start)
+    "$ORCH_ROOT/scripts/yb_start.sh" "$@"
+    ;;
+  dispatch)
+    "$ORCH_ROOT/scripts/yb_dispatch.sh" "$@"
+    ;;
+  collect)
+    "$ORCH_ROOT/scripts/yb_collect.sh" "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage
+    exit 1
+    ;;
+esac

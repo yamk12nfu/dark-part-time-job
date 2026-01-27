@@ -1,0 +1,41 @@
+schema_version: 1
+task:
+  task_id: null
+  parent_cmd_id: null
+  assigned_to: "{{WORKER_ID}}"
+  assigned_at: ""
+  status: idle
+
+  title: ""
+  description: ""
+  repo_root: "."
+  persona: ""
+
+  constraints:
+    allowed_paths: []
+    forbidden_paths: []
+    deliverables: []
+    shared_files_policy: warn
+    tests_policy: none
+
+  codex:
+    mode: exec_stdin
+    sandbox: workspace-write
+    approval: on-request
+    model: default
+    web_search: false
+
+  prompt: |
+    あなたはこのYAMLに書かれているタスクを実行する。
+    まずこのファイルを読み、taskの内容と制約を理解すること。
+
+    ルール:
+    - 共有ファイルは原則避ける。必要なら触ってよいが、必ずレポートで明記。
+    - テストは原則実行しない（必要なら提案だけ）。
+    - 指示されていない範囲のリファクタや整形はしない。
+    - persona が指定されていれば、その専門家として作業する。
+
+    作業が終わったら、以下のレポート形式で
+    `.yamibaito/queue/reports/{{WORKER_ID}}_report.yaml` を更新すること。
+    summary は1行で簡潔に書くこと。
+    persona を使った場合は report.persona に記載すること。

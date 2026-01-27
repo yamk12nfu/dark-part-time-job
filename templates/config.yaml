@@ -1,0 +1,13 @@
+workers:
+  codex_count: 3
+
+codex:
+  sandbox: workspace-write
+  approval: on-request
+  model: default
+  web_search: false
+
+policies:
+  tests: none
+  shared_files: warn
+  constraints_level: loose

@@ -1,0 +1,16 @@
+schema_version: 1
+report:
+  worker_id: "{{WORKER_ID}}"
+  task_id: null
+  parent_cmd_id: null
+  finished_at: ""
+  status: idle
+  summary: ""
+  files_changed: []
+  shared_files_touched: []
+  notes: null
+  persona: ""
+  skill_candidate_found: false
+  skill_candidate_name: ""
+  skill_candidate_description: ""
+  skill_candidate_reason: ""

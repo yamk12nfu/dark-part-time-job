@@ -73,6 +73,8 @@ EOF
 
 tmux select-pane -t "$session_name":0.0 -T "waka"
 tmux select-pane -t "$session_name":0.1 -T "oyabun"
+tmux select-pane -t "$session_name":0.0 -P 'bg=#1b2f2a'
+tmux select-pane -t "$session_name":0.1 -P 'bg=#2f1b1b'
 
 for i in $(seq 1 "$worker_count"); do
   pane_index=$((1 + i))

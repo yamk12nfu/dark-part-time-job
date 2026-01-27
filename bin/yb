@@ -12,6 +12,7 @@ Usage:
   yb start [--repo <path>]
   yb dispatch [--repo <path>]
   yb collect [--repo <path>]
+  yb run-worker --repo <path> --worker <id>
   yb help
 EOF
 }
@@ -31,6 +32,9 @@ case "$cmd" in
     ;;
   collect)
     "$ORCH_ROOT/scripts/yb_collect.sh" "$@"
+    ;;
+  run-worker)
+    "$ORCH_ROOT/scripts/yb_run_worker.sh" "$@"
     ;;
   help|-h|--help)
     usage

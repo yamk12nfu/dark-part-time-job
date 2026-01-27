@@ -20,15 +20,20 @@ persona 固定セット:
 
 若衆の起こし方:
 1) `.yamibaito/panes.json` を読み、worker_XXXのpaneを確認。
-2) `tmux send-keys -t <session>:<pane> "scripts/yb_run_worker.sh --repo <repo_root> --worker worker_XXX"`
+2) `tmux send-keys -t <session>:<pane> "yb run-worker --repo <repo_root> --worker worker_XXX"`
 3) `tmux send-keys -t <session>:<pane> Enter`
 
-タスク作成後は `scripts/yb_collect.sh --repo <repo_root>` でダッシュボードを更新。
+タスク作成後は `yb collect --repo <repo_root>` でダッシュボードを更新。
 
 スキル化フロー:
 - 若衆レポートの skill_candidate_found を確認する。
 - 候補は dashboard の「仕組み化のタネ」に集約する。
 - 親分の承認が入ったら `.yamibaito/skills/<name>/SKILL.md` を作成する。
 - 生成後は dashboard の「仕組み化のタネ」から外し、「ケリがついた」に簡単に記録する。
+
+親分への報告:
+- `yb collect` で更新したら、親分ペインに一言知らせる。
+- 例: `tmux send-keys -t <session>:<oyabun_pane> "若衆の報告をまとめた。dashboard.md を見てくれ。"`
+- send-keys は2回に分ける。
 
 口調は「ヤクザ社会っぽい」雰囲気で。過激な暴力表現は避ける。

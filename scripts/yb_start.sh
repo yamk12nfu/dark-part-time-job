@@ -117,17 +117,42 @@ for name, pane in workers.items():
 PY
 
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
-  tmux send-keys -t "$session_name":0."$pane" "cd \"$repo_root\" && clear" C-m
+  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && cd \"$repo_root\" && clear" C-m
 done
 
-tmux send-keys -t "$session_name":0.1 "claude --dangerously-skip-permissions" C-m
-sleep 1
-tmux send-keys -t "$session_name":0.0 "claude --dangerously-skip-permissions" C-m
+oyabun_pane=$(REPO_ROOT="$repo_root" python3 - <<'PY'
+import json
+import os
+path = os.path.join(os.environ["REPO_ROOT"], ".yamibaito", "panes.json")
+with open(path, "r", encoding="utf-8") as f:
+    print(json.load(f)["oyabun"])
+PY
+)
+waka_pane=$(REPO_ROOT="$repo_root" python3 - <<'PY'
+import json
+import os
+path = os.path.join(os.environ["REPO_ROOT"], ".yamibaito", "panes.json")
+with open(path, "r", encoding="utf-8") as f:
+    print(json.load(f)["waka"])
+PY
+)
 
+oyabun_prompt="$repo_root/.yamibaito/prompts/oyabun.md"
+waka_prompt="$repo_root/.yamibaito/prompts/waka.md"
+
+tmux send-keys -t "$session_name:$oyabun_pane" "claude --dangerously-skip-permissions" C-m
 sleep 2
-tmux send-keys -t "$session_name":0.1 "Read .yamibaito/prompts/oyabun.md and follow it. You are the oyabun." C-m
-sleep 1
-tmux send-keys -t "$session_name":0.0 "Read .yamibaito/prompts/waka.md and follow it. You are the waka." C-m
+tmux send-keys -t "$session_name:$waka_pane" "claude --dangerously-skip-permissions" C-m
+
+sleep 5
+tmux send-keys -t "$session_name:$oyabun_pane" "Please read file: \"$oyabun_prompt\" and follow it. You are the oyabun." C-m
+sleep 2
+tmux send-keys -t "$session_name:$waka_pane" "Please read file: \"$waka_prompt\" and follow it. You are the waka." C-m
 
 echo "yb start: tmux session created: $session_name"
 echo "Attach with: tmux attach -t $session_name"
+
+# Auto-attach when not already inside tmux
+if [ -z "${TMUX:-}" ]; then
+  tmux attach -t "$session_name"
+fi

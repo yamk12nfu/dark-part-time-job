@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="."
 worker_id=""
 while [[ $# -gt 0 ]]; do
@@ -33,7 +34,7 @@ if [ ! -f "$task_file" ]; then
   exit 1
 fi
 
-REPO_ROOT="$repo_root" TASK_FILE="$task_file" python3 - <<'PY'
+REPO_ROOT="$repo_root" TASK_FILE="$task_file" ORCH_ROOT="$ORCH_ROOT" python3 - <<'PY'
 import os, sys, subprocess, json
 
 repo_root = os.environ["REPO_ROOT"]
@@ -52,5 +53,22 @@ proc = subprocess.Popen(
     text=True,
 )
 proc.communicate(content)
-sys.exit(proc.returncode)
+exit_code = proc.returncode
+
+panes_path = os.path.join(repo_root, ".yamibaito", "panes.json")
+try:
+    with open(panes_path, "r", encoding="utf-8") as f:
+        panes = json.load(f)
+    session = panes.get("session")
+    waka = panes.get("waka")
+    if session and waka:
+        notify = "worker finished; please run: yb collect --repo " + repo_root
+        subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", notify], check=False)
+        subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", "Enter"], check=False)
+except FileNotFoundError:
+    pass
+except json.JSONDecodeError:
+    pass
+
+sys.exit(exit_code)
 PY

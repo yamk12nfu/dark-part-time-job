@@ -2,6 +2,43 @@
 
 中央オーケストレータ（親分→若頭→若衆）を、各リポジトリから起動できるようにするための仕組み。
 
+## 必要なパッケージ
+
+- `tmux`
+- `claude` CLI（Claude Code）
+- `codex` CLI
+- `python3`
+- `git`
+
+## 環境ごとに修正が必要な箇所
+
+### 1) オーケストレータのパス
+
+このREADMEの例は `<path-to-orchestrator>` を使っています。環境に合わせてパスを置き換えてください。
+
+例:
+- `/Users/<you>/path/to/dark-part-time-job/bin/yb`
+
+### 2) `yb` をパス or エイリアス登録（推奨）
+
+毎回フルパスで呼ぶのが面倒なら、`~/.zshrc` などに追加してください。
+
+```bash
+# どちらか片方でOK
+export PATH="/Users/<you>/path/to/dark-part-time-job/bin:$PATH"
+alias yb="/Users/<you>/path/to/dark-part-time-job/bin/yb"
+```
+
+### 3) リポジトリが別パスにある場合
+
+`yb` コマンドは `--repo <path>` で対象リポジトリを指定できます。
+
+例:
+```
+yb init --repo /path/to/your/repo
+yb start --repo /path/to/your/repo
+```
+
 ## 使い方（各リポジトリ側）
 
 1) 初期化

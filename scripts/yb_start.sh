@@ -47,13 +47,36 @@ tmux new-session -d -s "$session_name" -n main
 # - right 50%: workers stacked
 tmux split-window -h -p 50 -t "$session_name":0
 
-# Build right column workers by repeatedly splitting the top-right pane.
+# Build right column workers by repeatedly splitting.
 for i in $(seq 2 "$worker_count"); do
   tmux split-window -v -t "$session_name":0.1
 done
 
 # Split left column for oyabun (top) and waka (bottom).
 tmux split-window -v -p 40 -t "$session_name":0.0
+
+# 右側の若衆ペインを等分割にリサイズ
+# 右カラムの総高さを取得し、worker_count で割って各ペインに適用
+if [ "$worker_count" -gt 1 ]; then
+  # 右側ペインの情報を収集
+  right_pane_indices=()
+  total_height=0
+  while IFS=: read -r idx left height; do
+    if [ "$left" -gt 0 ]; then
+      right_pane_indices+=("$idx")
+      total_height=$((total_height + height))
+    fi
+  done < <(tmux list-panes -t "$session_name":0 -F '#{pane_index}:#{pane_left}:#{pane_height}')
+  
+  if [ ${#right_pane_indices[@]} -gt 0 ]; then
+    target_height=$((total_height / ${#right_pane_indices[@]}))
+    # 最後のペイン以外をリサイズ（最後は残りを自動で埋める）
+    count=${#right_pane_indices[@]}
+    for ((j=0; j<count-1; j++)); do
+      tmux resize-pane -t "$session_name":0."${right_pane_indices[$j]}" -y "$target_height" 2>/dev/null || true
+    done
+  fi
+fi
 
 pane_map="$repo_root/.yamibaito/panes.json"
 

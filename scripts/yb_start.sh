@@ -104,9 +104,13 @@ oyabun = left_panes[0]["index"] if left_panes else 0
 waka = left_panes[1]["index"] if len(left_panes) > 1 else 0
 
 workers = {}
+worker_name_map = {}  # worker_001 -> "銀次" のマッピング
 for i in range(worker_count):
     if i < len(right_panes):
-        workers[f"worker_{i+1:03d}"] = f"0.{right_panes[i]['index']}"
+        wid = f"worker_{i+1:03d}"
+        workers[wid] = f"0.{right_panes[i]['index']}"
+        if i < len(worker_names):
+            worker_name_map[wid] = worker_names[i]
 
 mapping = {
     "session": session,
@@ -114,6 +118,7 @@ mapping = {
     "oyabun": f"0.{oyabun}",
     "waka": f"0.{waka}",
     "workers": workers,
+    "worker_names": worker_name_map,
 }
 
 with open(pane_map, "w", encoding="utf-8") as f:

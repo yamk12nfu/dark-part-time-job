@@ -1,5 +1,5 @@
 workers:
-  codex_count: 3
+  codex_count: 5
 
 codex:
   sandbox: workspace-write

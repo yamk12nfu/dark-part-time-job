@@ -26,6 +26,24 @@ tasks_dir = os.path.join(repo_root, ".yamibaito/queue/tasks")
 reports_dir = os.path.join(repo_root, ".yamibaito/queue/reports")
 dashboard_file = os.path.join(repo_root, "dashboard.md")
 index_file = os.path.join(reports_dir, "_index.json")
+panes_file = os.path.join(repo_root, ".yamibaito/panes.json")
+
+# 若衆の名前マッピングを読み込む（worker_001 -> "銀次" など）
+worker_names = {}
+if os.path.exists(panes_file):
+    try:
+        with open(panes_file, "r", encoding="utf-8") as f:
+            panes_data = json.load(f)
+            worker_names = panes_data.get("worker_names", {})
+    except (json.JSONDecodeError, KeyError):
+        pass
+
+def get_worker_display_name(worker_id):
+    """worker_id から表示名を取得（名前があれば名前、なければ worker_id）"""
+    name = worker_names.get(worker_id)
+    if name:
+        return f"{name}({worker_id})"
+    return worker_id
 
 def read_simple_kv(path, keys):
     data = {k: None for k in keys}
@@ -87,13 +105,18 @@ for report_path in list_files(reports_dir, "_report.yaml"):
 attention = []
 done = []
 skill_candidates = []
+completed_worker_ids = set()  # 完了した若衆のID（タスクファイルリセット用）
 for r in reports:
     status = (r.get("status") or "").lower()
     notes = r.get("notes")
     if status in ("blocked", "failed") or (notes and notes not in ("null", "")):
         attention.append(r)
-    if status == "done":
+    # 防御的コーディング: "done" と "completed" の両方を完了として扱う
+    if status in ("done", "completed"):
         done.append(r)
+        worker_id = r.get("worker_id")
+        if worker_id:
+            completed_worker_ids.add(worker_id)
     found = (r.get("skill_candidate_found") or "").lower() == "true"
     if found and r.get("skill_candidate_name"):
         skill_candidates.append(r)
@@ -121,18 +144,20 @@ if tasks:
         status = t.get("status") or "assigned"
         title = t.get("title") or "-"
         started = t.get("assigned_at") or "-"
-        lines.append(f"| {t.get('task_id')} | {title} | - | {status} | {t.get('worker_id')} | {started} |")
+        worker_display = get_worker_display_name(t.get("worker_id"))
+        lines.append(f"| {t.get('task_id')} | {title} | - | {status} | {worker_display} | {started} |")
 else:
     lines.append("| - | - | - | - | - | - |")
 lines.append("")
 lines.append("## ✅ ケリがついた（完了・本日）")
-lines.append("| 時刻 | 件 | 結果 |")
-lines.append("|------|----|------|")
+lines.append("| 時刻 | 件 | 担当 | 結果 |")
+lines.append("|------|----|------|------|")
 if done:
     for r in done:
-        lines.append(f"| {r.get('finished_at') or '-'} | {r.get('task_id')} | {r.get('summary') or '-'} |")
+        worker_display = get_worker_display_name(r.get("worker_id"))
+        lines.append(f"| {r.get('finished_at') or '-'} | {r.get('task_id')} | {worker_display} | {r.get('summary') or '-'} |")
 else:
-    lines.append("| - | - | - |")
+    lines.append("| - | - | - | - |")
 lines.append("")
 lines.append("## 💡 仕組み化のタネ（任意）")
 if skill_candidates:
@@ -147,7 +172,7 @@ lines.append("")
 lines.append("## ⏸️ 待機所（任意）")
 if idle_workers:
     for w in idle_workers:
-        lines.append(f"- {w}")
+        lines.append(f"- {get_worker_display_name(w)}")
 else:
     lines.append("なし")
 lines.append("")
@@ -157,6 +182,56 @@ lines.append("")
 
 with open(dashboard_file, "w", encoding="utf-8") as f:
     f.write("\n".join(lines))
+
+# 完了した若衆のタスクファイルをリセット（シノギ中から消すため）
+IDLE_TASK_TEMPLATE = """schema_version: 1
+task:
+  task_id: null
+  parent_cmd_id: null
+  assigned_to: "{worker_id}"
+  assigned_at: ""
+  status: idle
+
+  title: ""
+  description: ""
+  repo_root: "."
+  persona: ""
+
+  constraints:
+    allowed_paths: []
+    forbidden_paths: []
+    deliverables: []
+    shared_files_policy: warn
+    tests_policy: none
+
+  codex:
+    mode: exec_stdin
+    sandbox: workspace-write
+    approval: on-request
+    model: default
+    web_search: false
+
+  prompt: |
+    あなたはこのYAMLに書かれているタスクを実行する。
+    まずこのファイルを読み、taskの内容と制約を理解すること。
+
+    ルール:
+    - 共有ファイルは原則避ける。必要なら触ってよいが、必ずレポートで明記。
+    - テストは原則実行しない（必要なら提案だけ）。
+    - 指示されていない範囲のリファクタや整形はしない。
+    - persona が指定されていれば、その専門家として作業する。
+
+    作業が終わったら、以下のレポート形式で
+    `.yamibaito/queue/reports/{worker_id}_report.yaml` を更新すること。
+    summary は1行で簡潔に書くこと。
+    persona を使った場合は report.persona に記載すること。
+"""
+
+for worker_id in completed_worker_ids:
+    task_path = os.path.join(tasks_dir, f"{worker_id}.yaml")
+    if os.path.exists(task_path):
+        with open(task_path, "w", encoding="utf-8") as f:
+            f.write(IDLE_TASK_TEMPLATE.format(worker_id=worker_id))
 
 index_payload = {"processed_reports": []}
 for r in reports:

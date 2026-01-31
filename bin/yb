@@ -10,6 +10,7 @@ yb - yamibaito orchestrator
 Usage:
   yb init [--repo <path>]
   yb start [--repo <path>]
+  yb restart [--repo <path>]
   yb dispatch [--repo <path>]
   yb collect [--repo <path>]
   yb run-worker --repo <path> --worker <id>
@@ -26,6 +27,9 @@ case "$cmd" in
     ;;
   start)
     "$ORCH_ROOT/scripts/yb_start.sh" "$@"
+    ;;
+  restart)
+    "$ORCH_ROOT/scripts/yb_restart.sh" "$@"
     ;;
   dispatch)
     "$ORCH_ROOT/scripts/yb_dispatch.sh" "$@"

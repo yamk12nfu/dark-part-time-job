@@ -35,7 +35,7 @@ if [ ! -f "$task_file" ]; then
 fi
 
 REPO_ROOT="$repo_root" TASK_FILE="$task_file" ORCH_ROOT="$ORCH_ROOT" python3 - <<'PY'
-import os, sys, subprocess, json
+import os, sys, subprocess, json, re
 
 repo_root = os.environ["REPO_ROOT"]
 task_file = os.environ["TASK_FILE"]
@@ -43,7 +43,11 @@ task_file = os.environ["TASK_FILE"]
 with open(task_file, "r", encoding="utf-8") as f:
     content = f.read()
 
-cmd = ["codex", "exec", "-"]
+# Extract sandbox mode from task YAML (default: workspace-write)
+sandbox_match = re.search(r'^\s*sandbox:\s*(\S+)', content, re.MULTILINE)
+sandbox = sandbox_match.group(1).strip('"\'') if sandbox_match else "workspace-write"
+
+cmd = ["codex", "exec", "--sandbox", sandbox, "-"]
 proc = subprocess.Popen(
     cmd,
     stdin=subprocess.PIPE,

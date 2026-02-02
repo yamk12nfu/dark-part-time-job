@@ -146,6 +146,10 @@ date "+%Y-%m-%dT%H:%M:%S"
 
 若頭を起こすときは **`session`** と **`waka`** を使い、`tmux send-keys -t <session>:<waka> "..."` の形で送る。
 
+**補足（複数セッション時）**:
+- `yb start --session <id>` で起動した場合は `panes_<id>.json` を使う。
+- 指示キューは `.yamibaito/queue_<id>/director_to_planner.yaml` に書く（デフォルトは `.yamibaito/queue/`）。
+
 ### ❌ 絶対禁止パターン
 
 ```bash

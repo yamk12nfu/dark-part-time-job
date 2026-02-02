@@ -41,6 +41,7 @@ workflow:
   - step: 2
     action: read_yaml
     target: ".yamibaito/queue/director_to_planner.yaml"
+    note: "複数セッション時は .yamibaito/queue_<id>/director_to_planner.yaml を読む"
     filter: "status: pending"
   - step: 3
     action: update_dashboard
@@ -67,6 +68,7 @@ workflow:
   - step: 9
     action: scan_reports
     target: ".yamibaito/queue/reports/worker_*_report.yaml"
+    note: "複数セッション時は .yamibaito/queue_<id>/reports/ を参照"
   - step: 10
     action: run_yb_collect
     note: "yb collect --repo <repo_root> で dashboard を更新"
@@ -83,6 +85,9 @@ files:
   panes: ".yamibaito/panes.json"
   dashboard: "dashboard.md"
   skills_dir: ".yamibaito/skills"
+
+note:
+  session_paths: "複数セッション時は queue_<id>/ と panes_<id>.json を使う"
 
 # ペイン参照
 panes:
@@ -185,11 +190,13 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 #### 若衆を起こす場合（例）
 
 1. `.yamibaito/panes.json` を読み、対象若衆の pane を確認。
+   - 複数セッション時は `panes_<id>.json` を使う。
 2. **1回目**: メッセージだけ送る
 
    ```bash
    tmux send-keys -t <session>:<pane> "yb run-worker --repo <repo_root> --worker worker_001"
    ```
+   - 複数セッション時は `--session <id>` を付ける。
 
 3. **2回目**: Enter だけ送る
 
@@ -219,6 +226,8 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 .yamibaito/queue/tasks/worker_003.yaml  ← 若衆3専用
 ...
 ```
+
+複数セッション時は `queue_<id>/tasks/` を使う。
 
 - コマンドは分割して、各 `.yamibaito/queue/tasks/worker_XXX.yaml` に書く。
 - タスクに `persona` を設定する。上記 Front Matter の `persona_sets` から選ぶ（空でもよい）。
@@ -303,8 +312,8 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 
 ## 若衆の起こし方（要約）
 
-1. `.yamibaito/panes.json` を読み、対象 `worker_XXX` の pane を確認。
-2. `tmux send-keys -t <session>:<pane> "yb run-worker --repo <repo_root> --worker worker_XXX"`（1回目）
+1. `.yamibaito/panes.json` を読み、対象 `worker_XXX` の pane を確認（複数セッション時は `panes_<id>.json`）。
+2. `tmux send-keys -t <session>:<pane> "yb run-worker --repo <repo_root> --worker worker_XXX"`（1回目、複数セッション時は `--session <id>` を付ける）
 3. `tmux send-keys -t <session>:<pane> Enter`（2回目）
 
-タスクはあらかじめ `.yamibaito/queue/tasks/worker_XXX.yaml` に書いておくこと。
+タスクはあらかじめ `.yamibaito/queue/tasks/worker_XXX.yaml` に書いておくこと（複数セッション時は `queue_<id>/tasks/`）。

@@ -4,6 +4,7 @@ set -euo pipefail
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="."
 worker_id=""
+session_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -12,6 +13,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --worker)
       worker_id="$2"
+      shift 2
+      ;;
+    --session)
+      session_id="$2"
       shift 2
       ;;
     *)
@@ -27,18 +32,26 @@ if [ -z "$worker_id" ]; then
 fi
 
 repo_root="$(cd "$repo_root" && pwd)"
-task_file="$repo_root/.yamibaito/queue/tasks/${worker_id}.yaml"
+session_id="$(echo "$session_id" | sed 's/[^A-Za-z0-9_-]/_/g')"
+session_suffix=""
+if [ -n "$session_id" ]; then
+  session_suffix="_${session_id}"
+fi
+queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
+task_file="$queue_dir/tasks/${worker_id}.yaml"
 
 if [ ! -f "$task_file" ]; then
   echo "Missing task file: $task_file" >&2
   exit 1
 fi
 
-REPO_ROOT="$repo_root" TASK_FILE="$task_file" ORCH_ROOT="$ORCH_ROOT" python3 - <<'PY'
+REPO_ROOT="$repo_root" TASK_FILE="$task_file" ORCH_ROOT="$ORCH_ROOT" PANES_SUFFIX="$session_suffix" SESSION_ID="$session_id" python3 - <<'PY'
 import os, sys, subprocess, json, re
 
 repo_root = os.environ["REPO_ROOT"]
 task_file = os.environ["TASK_FILE"]
+panes_suffix = os.environ.get("PANES_SUFFIX", "")
+session_id = os.environ.get("SESSION_ID", "")
 
 with open(task_file, "r", encoding="utf-8") as f:
     content = f.read()
@@ -59,7 +72,7 @@ proc = subprocess.Popen(
 proc.communicate(content)
 exit_code = proc.returncode
 
-panes_path = os.path.join(repo_root, ".yamibaito", "panes.json")
+panes_path = os.path.join(repo_root, ".yamibaito", f"panes{panes_suffix}.json")
 try:
     with open(panes_path, "r", encoding="utf-8") as f:
         panes = json.load(f)
@@ -67,6 +80,8 @@ try:
     waka = panes.get("waka")
     if session and waka:
         notify = "worker finished; please run: yb collect --repo " + repo_root
+        if session_id:
+            notify += " --session " + session_id
         subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", notify], check=False)
         subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", "Enter"], check=False)
 except FileNotFoundError:

@@ -55,6 +55,9 @@ files:
   task: ".yamibaito/queue/tasks/worker_{N}.yaml"
   report: ".yamibaito/queue/reports/worker_{N}_report.yaml"
 
+note:
+  session_paths: "複数セッション時は queue_<id>/ を使う"
+
 # send-keys ルール
 send_keys:
   to_waka_allowed: false
@@ -147,6 +150,7 @@ date "+%Y-%m-%dT%H:%M:%S"
 .yamibaito/queue/tasks/worker_002.yaml      ← 他若衆のファイルは読むな
 ...
 ```
+複数セッション時は `queue_<id>/` 配下のみを対象とする。
 
 - 自分が起動されたときの **worker_id**（タスクの `assigned_to`）と一致する task / report ファイルのみ読む・書く。
 - 他の若衆の task / report は読まない。
@@ -161,7 +165,7 @@ date "+%Y-%m-%dT%H:%M:%S"
 
 ## 報告の書き方
 
-`.yamibaito/queue/reports/worker_XXX_report.yaml` を更新する。スキーマは以下に従う。
+`.yamibaito/queue/reports/worker_XXX_report.yaml` を更新する。複数セッション時は `queue_<id>/reports/` を使う。
 
 ```yaml
 schema_version: 1
@@ -222,7 +226,7 @@ report:
 
 ## コンテキスト読み込み手順
 
-1. **自分の** `.yamibaito/queue/tasks/worker_XXX.yaml` を読む。
+1. **自分の** `.yamibaito/queue/tasks/worker_XXX.yaml` を読む（複数セッション時は `queue_<id>/tasks/`）。
 2. `task.repo_root` / `task.constraints` / `task.deliverables` を確認する。
 3. 必要なら対象ファイル（`target_path` 等）を読む。
 4. `task.persona` を確認し、そのペルソナで作業する。
@@ -234,4 +238,4 @@ report:
 - 共有ファイルは原則避ける。触ったら必ず `shared_files_touched` に書く。
 - テストは原則実行しない（必要なら提案だけ）。
 - persona が指定されていれば、その専門家として作業する。
-- 完了後は **自分専用** `.yamibaito/queue/reports/worker_XXX_report.yaml` を更新する。
+- 完了後は **自分専用** `.yamibaito/queue/reports/worker_XXX_report.yaml` を更新する（複数セッション時は `queue_<id>/reports/`）。

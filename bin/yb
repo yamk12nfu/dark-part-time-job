@@ -13,6 +13,8 @@ Usage:
   yb restart [--repo <path>] [--session <id>]
   yb dispatch [--repo <path>] [--session <id>]
   yb collect [--repo <path>] [--session <id>]
+  yb plan [--repo <path>] [--title <short-title>]
+  yb plan-review [--repo <path>] [--plan-dir <path>]
   yb run-worker --repo <path> --worker <id> [--session <id>]
   yb help
 EOF
@@ -36,6 +38,12 @@ case "$cmd" in
     ;;
   collect)
     "$ORCH_ROOT/scripts/yb_collect.sh" "$@"
+    ;;
+  plan)
+    bash "$ORCH_ROOT/scripts/yb_plan.sh" "$@"
+    ;;
+  plan-review)
+    bash "$ORCH_ROOT/scripts/yb_plan_review.sh" "$@"
     ;;
   run-worker)
     "$ORCH_ROOT/scripts/yb_run_worker.sh" "$@"

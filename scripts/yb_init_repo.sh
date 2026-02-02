@@ -25,8 +25,9 @@ tasks_dir="$queue_dir/tasks"
 reports_dir="$queue_dir/reports"
 prompts_dir="$config_dir/prompts"
 skills_dir="$config_dir/skills"
+plan_dir="$config_dir/plan"
 
-mkdir -p "$tasks_dir" "$reports_dir" "$prompts_dir" "$skills_dir"
+mkdir -p "$tasks_dir" "$reports_dir" "$prompts_dir" "$skills_dir" "$plan_dir"
 
 if [ ! -f "$config_dir/config.yaml" ]; then
   cp "$ORCH_ROOT/templates/config.yaml" "$config_dir/config.yaml"
@@ -49,6 +50,7 @@ fi
 cp "$ORCH_ROOT/prompts/oyabun.md" "$prompts_dir/oyabun.md"
 cp "$ORCH_ROOT/prompts/waka.md" "$prompts_dir/waka.md"
 cp "$ORCH_ROOT/prompts/wakashu.md" "$prompts_dir/wakashu.md"
+cp "$ORCH_ROOT/prompts/plan.md" "$prompts_dir/plan.md"
 
 worker_count=$(grep -E "^\\s*codex_count:" "$config_dir/config.yaml" | awk '{print $2}')
 if [ -z "$worker_count" ]; then

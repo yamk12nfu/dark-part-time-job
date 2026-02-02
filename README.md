@@ -69,6 +69,7 @@ tmux attach -t yamibaito_<repo>
   - `reports/_index.json`
 - `.yamibaito/queue_<id>/`（`yb start --session <id>` 時に作成）
 - `.yamibaito/prompts/`
+- `.yamibaito/plan/`（計画書の保存先）
 
 ## 設定
 
@@ -95,6 +96,7 @@ tmux attach -t yamibaito_<repo>
 | `yb restart` | 既存セッションを破棄して再起動 |
 | `yb dispatch` | 若衆へ割当済みタスクを起動（手動用） |
 | `yb collect` | `dashboard.md` を再生成 |
+| `yb plan` | 計画作成セッションを新規起動 |
 
 ---
 
@@ -123,6 +125,36 @@ yb init --repo /path/to/repo   # 別リポジトリを対象
    - `reports/_index.json`
 
 **注意:** 設定ファイル（`config.yaml`、`director_to_planner.yaml`、`dashboard.md` 等）やワーカーファイルは、既に存在する場合スキップされる。ただし **プロンプトファイル（`oyabun.md`、`waka.md`、`wakashu.md`）は毎回オーケストレータの最新版で上書きされる。**
+
+---
+
+### `yb plan`
+
+計画作成セッションを新規起動し、`.yamibaito/plan/<name>/` に成果物を生成する。
+`.yamibaito` が無い場合は自動で初期化される。
+
+```bash
+yb plan
+yb plan --repo /path/to/repo
+yb plan --repo /path/to/repo --title auth-session
+```
+
+**実行されること:**
+
+1. `.yamibaito/plan/<name>/` を作成
+2. `plan.md` / `tasks.md` / `checklist.md` / `review_prompt.md` / `review_report.md` を生成
+3. 新規 tmux セッションで Claude Code を起動
+
+**運用ルール:**
+
+- Claude Code 内で `/plan-review` を入力すると `review_prompt.md` を使って Codex にレビューを投げる
+- 不明点や曖昧な点は推測せず、必ず質問する
+- `/plan-review` は `yb plan-review` で Codex ペインに送る（plan セッション内で実行）
+
+**命名規則:**
+
+- `YYYY-MM-DD--<short-title>`
+- `<short-title>` は 2〜4語の英単語・小文字・`-` 区切り
 
 ---
 

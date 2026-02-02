@@ -2,10 +2,15 @@
 set -euo pipefail
 
 repo_root="."
+session_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       repo_root="$2"
+      shift 2
+      ;;
+    --session)
+      session_id="$2"
       shift 2
       ;;
     *)
@@ -16,17 +21,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 repo_root="$(cd "$repo_root" && pwd)"
+session_id="$(echo "$session_id" | sed 's/[^A-Za-z0-9_-]/_/g')"
+session_suffix=""
+if [ -n "$session_id" ]; then
+  session_suffix="_${session_id}"
+fi
 
-REPO_ROOT="$repo_root" python3 - <<'PY'
+REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" python3 - <<'PY'
 import os, json, datetime
 
 repo_root = os.environ["REPO_ROOT"]
+session_suffix = os.environ.get("SESSION_SUFFIX", "")
 config_file = os.path.join(repo_root, ".yamibaito/config.yaml")
-tasks_dir = os.path.join(repo_root, ".yamibaito/queue/tasks")
-reports_dir = os.path.join(repo_root, ".yamibaito/queue/reports")
+queue_dir = os.path.join(repo_root, f".yamibaito/queue{session_suffix}")
+tasks_dir = os.path.join(queue_dir, "tasks")
+reports_dir = os.path.join(queue_dir, "reports")
 dashboard_file = os.path.join(repo_root, "dashboard.md")
 index_file = os.path.join(reports_dir, "_index.json")
-panes_file = os.path.join(repo_root, ".yamibaito/panes.json")
+panes_file = os.path.join(repo_root, f".yamibaito/panes{session_suffix}.json")
+queue_rel = os.path.relpath(queue_dir, repo_root)
 
 # 若衆の名前マッピングを読み込む（worker_001 -> "銀次" など）
 worker_names = {}
@@ -222,7 +235,7 @@ task:
     - persona が指定されていれば、その専門家として作業する。
 
     作業が終わったら、以下のレポート形式で
-    `.yamibaito/queue/reports/{worker_id}_report.yaml` を更新すること。
+    `{queue_rel}/reports/{worker_id}_report.yaml` を更新すること。
     summary は1行で簡潔に書くこと。
     persona を使った場合は report.persona に記載すること。
 """
@@ -231,7 +244,7 @@ for worker_id in completed_worker_ids:
     task_path = os.path.join(tasks_dir, f"{worker_id}.yaml")
     if os.path.exists(task_path):
         with open(task_path, "w", encoding="utf-8") as f:
-            f.write(IDLE_TASK_TEMPLATE.format(worker_id=worker_id))
+            f.write(IDLE_TASK_TEMPLATE.format(worker_id=worker_id, queue_rel=queue_rel))
 
 index_payload = {"processed_reports": []}
 for r in reports:

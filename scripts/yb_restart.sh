@@ -5,10 +5,15 @@ ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # 引数処理（yb_start.sh と同じ形式）
 repo_root="."
+session_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       repo_root="$2"
+      shift 2
+      ;;
+    --session)
+      session_id="$2"
       shift 2
       ;;
     *)
@@ -20,7 +25,12 @@ done
 
 repo_root="$(cd "$repo_root" && pwd)"
 repo_name="$(basename "$repo_root" | sed 's/[^A-Za-z0-9_-]/_/g')"
-session_name="yamibaito_${repo_name}"
+session_id="$(echo "$session_id" | sed 's/[^A-Za-z0-9_-]/_/g')"
+session_suffix=""
+if [ -n "$session_id" ]; then
+  session_suffix="_${session_id}"
+fi
+session_name="yamibaito_${repo_name}${session_suffix}"
 
 # 既存セッションを kill
 if tmux has-session -t "$session_name" 2>/dev/null; then
@@ -29,4 +39,7 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 fi
 
 # yb start を実行
+if [ -n "$session_id" ]; then
+  exec "$ORCH_ROOT/scripts/yb_start.sh" --repo "$repo_root" --session "$session_id"
+fi
 exec "$ORCH_ROOT/scripts/yb_start.sh" --repo "$repo_root"

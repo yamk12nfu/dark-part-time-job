@@ -4,10 +4,15 @@ set -euo pipefail
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 repo_root="."
+session_id=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       repo_root="$2"
+      shift 2
+      ;;
+    --session)
+      session_id="$2"
       shift 2
       ;;
     *)
@@ -19,7 +24,12 @@ done
 
 repo_root="$(cd "$repo_root" && pwd)"
 repo_name="$(basename "$repo_root" | sed 's/[^A-Za-z0-9_-]/_/g')"
-session_name="yamibaito_${repo_name}"
+session_id="$(echo "$session_id" | sed 's/[^A-Za-z0-9_-]/_/g')"
+session_suffix=""
+if [ -n "$session_id" ]; then
+  session_suffix="_${session_id}"
+fi
+session_name="yamibaito_${repo_name}${session_suffix}"
 
 config_file="$repo_root/.yamibaito/config.yaml"
 if [ ! -f "$config_file" ]; then
@@ -30,6 +40,38 @@ fi
 worker_count=$(grep -E "^\\s*codex_count:" "$config_file" | awk '{print $2}')
 if [ -z "$worker_count" ]; then
   worker_count=3
+fi
+
+queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
+tasks_dir="$queue_dir/tasks"
+reports_dir="$queue_dir/reports"
+if [ -n "$session_id" ]; then
+  mkdir -p "$tasks_dir" "$reports_dir"
+
+  if [ ! -f "$queue_dir/director_to_planner.yaml" ]; then
+    cp "$ORCH_ROOT/templates/queue/director_to_planner.yaml" "$queue_dir/director_to_planner.yaml"
+  fi
+
+  if [ ! -f "$reports_dir/_index.json" ]; then
+    cat > "$reports_dir/_index.json" <<'EOF'
+{"processed_reports":[]}
+EOF
+  fi
+
+  for i in $(seq 1 "$worker_count"); do
+    worker_id=$(printf "worker_%03d" "$i")
+    task_file="$tasks_dir/${worker_id}.yaml"
+    report_file="$reports_dir/${worker_id}_report.yaml"
+    if [ ! -f "$task_file" ]; then
+      cp "$ORCH_ROOT/templates/queue/tasks/worker_task.yaml" "$task_file"
+      sed -i "" "s/{{WORKER_ID}}/${worker_id}/g" "$task_file"
+      sed -i "" "s#\\.yamibaito/queue/#.yamibaito/queue${session_suffix}/#g" "$task_file"
+    fi
+    if [ ! -f "$report_file" ]; then
+      cp "$ORCH_ROOT/templates/queue/reports/worker_report.yaml" "$report_file"
+      sed -i "" "s/{{WORKER_ID}}/${worker_id}/g" "$report_file"
+    fi
+  done
 fi
 
 if tmux has-session -t "$session_name" 2>/dev/null; then
@@ -78,7 +120,7 @@ if [ "$worker_count" -gt 1 ]; then
   fi
 fi
 
-pane_map="$repo_root/.yamibaito/panes.json"
+pane_map="$repo_root/.yamibaito/panes${session_suffix}.json"
 
 SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" python3 - <<'PY'
 import json
@@ -165,18 +207,18 @@ for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
   tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && cd \"$repo_root\" && clear" C-m
 done
 
-oyabun_pane=$(REPO_ROOT="$repo_root" python3 - <<'PY'
+oyabun_pane=$(REPO_ROOT="$repo_root" PANE_MAP="$pane_map" python3 - <<'PY'
 import json
 import os
-path = os.path.join(os.environ["REPO_ROOT"], ".yamibaito", "panes.json")
+path = os.environ["PANE_MAP"]
 with open(path, "r", encoding="utf-8") as f:
     print(json.load(f)["oyabun"])
 PY
 )
-waka_pane=$(REPO_ROOT="$repo_root" python3 - <<'PY'
+waka_pane=$(REPO_ROOT="$repo_root" PANE_MAP="$pane_map" python3 - <<'PY'
 import json
 import os
-path = os.path.join(os.environ["REPO_ROOT"], ".yamibaito", "panes.json")
+path = os.environ["PANE_MAP"]
 with open(path, "r", encoding="utf-8") as f:
     print(json.load(f)["waka"])
 PY

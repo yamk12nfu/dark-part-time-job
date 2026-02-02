@@ -9,11 +9,11 @@ yb - yamibaito orchestrator
 
 Usage:
   yb init [--repo <path>]
-  yb start [--repo <path>]
-  yb restart [--repo <path>]
-  yb dispatch [--repo <path>]
-  yb collect [--repo <path>]
-  yb run-worker --repo <path> --worker <id>
+  yb start [--repo <path>] [--session <id>]
+  yb restart [--repo <path>] [--session <id>]
+  yb dispatch [--repo <path>] [--session <id>]
+  yb collect [--repo <path>] [--session <id>]
+  yb run-worker --repo <path> --worker <id> [--session <id>]
   yb help
 EOF
 }

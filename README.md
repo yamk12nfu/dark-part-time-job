@@ -173,6 +173,27 @@ tmux attach -t yamibaito_<repo>
 tmux attach -t yamibaito_<repo>_feature-x
 ```
 
+### 複数セッション時の参照先
+
+親分/若頭は **tmux セッション名**から `session id` を判定し、`queue` と `panes` を切り替える。
+
+```bash
+session_name="$(tmux display-message -p '#S')"
+repo_name="$(basename "$PWD")"
+
+if [ "$session_name" = "yamibaito_${repo_name}" ]; then
+  session_id=""
+elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
+  session_id="${session_name#yamibaito_${repo_name}_}"
+else
+  session_id=""
+fi
+```
+
+- `session_id` が空なら `.yamibaito/queue/` と `.yamibaito/panes.json`
+- `session_id` があれば `.yamibaito/queue_<id>/` と `.yamibaito/panes_<id>.json`
+- `yb run-worker` / `yb collect` / `yb dispatch` は `--session <id>` を揃える
+
 ---
 
 ### `yb restart`

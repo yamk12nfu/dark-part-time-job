@@ -177,6 +177,28 @@ date "+%Y-%m-%d %H:%M"
 date "+%Y-%m-%dT%H:%M:%S"
 ```
 
+## 🔴 セッション判定手順（複数セッション時は必須）
+
+以下で **session id** を確定し、参照先を切り替える。
+
+```bash
+session_name="$(tmux display-message -p '#S')"
+repo_name="$(basename "$PWD")"
+
+if [ "$session_name" = "yamibaito_${repo_name}" ]; then
+  session_id=""
+elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
+  session_id="${session_name#yamibaito_${repo_name}_}"
+else
+  session_id=""
+fi
+```
+
+- `session_id` が空ならデフォルトの `queue/` と `panes.json` を使う。
+- `session_id` があれば `queue_<id>/` と `panes_<id>.json` を使う。
+- `yb run-worker` / `yb collect` / `yb dispatch` は `--session <id>` を必ず付ける。
+- 期待した形式にならない場合は勝手に推測せず、判断保留で親分に確認する。
+
 ## 🔴 tmux send-keys の使用方法（超重要）
 
 ### ❌ 絶対禁止パターン

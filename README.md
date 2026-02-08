@@ -207,7 +207,22 @@ tmux attach -t yamibaito_<repo>_feature-x
 
 ### 複数セッション時の参照先
 
-親分/若頭は **tmux セッション名**から `session id` を判定し、`queue` と `panes` を切り替える。
+#### 環境変数による参照先の決定
+
+`yb start` で各ペインに以下の環境変数が自動 export される。
+
+| 環境変数 | 説明 | 例（デフォルト） | 例（session_id=dev） |
+| --- | --- | --- | --- |
+| `YB_SESSION_ID` | セッションID（空ならデフォルト） | `""` | `"dev"` |
+| `YB_PANES_PATH` | panes.json の絶対パス | `<repo>/.yamibaito/panes.json` | `<repo>/.yamibaito/panes_dev.json` |
+| `YB_QUEUE_DIR` | queue ディレクトリの絶対パス | `<repo>/.yamibaito/queue` | `<repo>/.yamibaito/queue_dev` |
+
+- これらの環境変数が設定されている場合、tmux セッション名からの推論より優先される
+- `yb start` で自動 export されるため、通常はユーザーが手動で設定する必要はない
+- セッション再起動（`yb restart`）で最新値が反映される
+- 環境変数が未設定の場合（手動でターミナルを開いた場合等）は、従来の tmux セッション名ベースの推論にフォールバックする
+
+環境変数が未設定の場合、親分/若頭は **tmux セッション名**から `session id` を判定し、`queue` と `panes` を切り替える。
 
 ```bash
 session_name="$(tmux display-message -p '#S')"

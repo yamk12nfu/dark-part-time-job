@@ -204,7 +204,7 @@ for name, pane in workers.items():
 PY
 
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
-  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && cd \"$repo_root\" && clear" C-m
+  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && export YB_SESSION_ID=\"$session_id\" && export YB_PANES_PATH=\"$pane_map\" && export YB_QUEUE_DIR=\"$queue_dir\" && cd \"$repo_root\" && clear" C-m
 done
 
 oyabun_pane=$(REPO_ROOT="$repo_root" PANE_MAP="$pane_map" python3 - <<'PY'

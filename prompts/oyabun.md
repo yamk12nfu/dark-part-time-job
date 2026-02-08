@@ -155,20 +155,39 @@ date "+%Y-%m-%dT%H:%M:%S"
 以下で **session id** を確定し、参照先を切り替える。
 
 ```bash
-session_name="$(tmux display-message -p '#S')"
-repo_name="$(basename "$PWD")"
-
-if [ "$session_name" = "yamibaito_${repo_name}" ]; then
-  session_id=""
-elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
-  session_id="${session_name#yamibaito_${repo_name}_}"
+# === 環境変数チェック（優先） ===
+if [ -n "${YB_PANES_PATH:-}" ] && [ -n "${YB_QUEUE_DIR:-}" ]; then
+  panes_path="$YB_PANES_PATH"
+  queue_dir="$YB_QUEUE_DIR"
+  session_id="${YB_SESSION_ID:-}"
 else
-  session_id=""
+  # === フォールバック: tmux セッション名から推論 ===
+  session_name="$(tmux display-message -p '#S')"
+  repo_name="$(basename "$PWD")"
+
+  if [ "$session_name" = "yamibaito_${repo_name}" ]; then
+    session_id=""
+  elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
+    session_id="${session_name#yamibaito_${repo_name}_}"
+  else
+    session_id=""
+  fi
+
+  if [ -n "$session_id" ]; then
+    panes_path=".yamibaito/panes_${session_id}.json"
+    queue_dir=".yamibaito/queue_${session_id}"
+  else
+    panes_path=".yamibaito/panes.json"
+    queue_dir=".yamibaito/queue"
+  fi
 fi
 ```
 
-- `session_id` が空ならデフォルトの `queue/` と `panes.json` を使う。
-- `session_id` があれば `queue_<id>/` と `panes_<id>.json` を使う。
+- 判定結果の参照先は `panes_path` と `queue_dir` を使う。
+- `YB_PANES_PATH` / `YB_QUEUE_DIR` が設定されていれば、tmux セッション名の推論をスキップしてそのまま使う。
+- `YB_PANES_PATH` / `YB_QUEUE_DIR` が未設定の場合（手動起動等）は、フォールバックとして tmux セッション名から `session_id` を推論する。
+- `session_id` が空ならデフォルトで `panes_path=.yamibaito/panes.json` と `queue_dir=.yamibaito/queue` を使う。
+- `session_id` があれば `panes_path=.yamibaito/panes_<id>.json` と `queue_dir=.yamibaito/queue_<id>` を使う。
 - 期待した形式にならない場合は勝手に推測せず、判断保留で組長に確認する。
 
 ### ❌ 絶対禁止パターン

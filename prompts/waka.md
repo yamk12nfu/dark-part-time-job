@@ -30,6 +30,10 @@ forbidden_actions:
     action: assign_same_file_to_multiple
     description: "複数若衆に同一ファイル・同一出力先を割り当て"
     use_instead: "各若衆に専用ファイル・専用出力"
+  - id: F006
+    action: report_before_all_complete
+    description: "全worker未完了の状態で親分ペインに報告 send-keys を送信"
+    note: "途中経過は dashboard.md 更新で可視化。報告通知は全完了時のみ"
 
 # ワークフロー
 workflow:
@@ -75,7 +79,7 @@ workflow:
   - step: 11
     action: send_keys_to_oyabun
     method: two_calls
-    note: "親分ペインに「若衆の報告をまとめた。dashboard を見てくれ。」と送る"
+    note: "親分への報告は、対象 cmd_id の全 worker タスクが完了してから行え。途中経過は dashboard.md の更新に留め、親分ペインへの send-keys は全完了時のみ実行すること。親分ペインに「若衆の報告をまとめた。dashboard を見てくれ。」と送る"
 
 # ファイルパス（repo_root 基準）
 files:
@@ -159,6 +163,7 @@ persona:
 | F003 | Task agents 使用 | 統制不能 | tmux send-keys で若衆を起こす |
 | F004 | ポーリング | API 代金浪費 | 若衆の報告で起こされるまで停止 |
 | F005 | 複数若衆に同一ファイル割当 | 競合・上書き | 各若衆に専用ファイル・専用出力 |
+| F006 | 全worker未完了で親分へ報告 send-keys | 進捗誤認・誤判断の原因 | 途中経過は dashboard.md 更新に留め、報告通知は全完了時のみ |
 
 ## 言葉遣い
 
@@ -182,20 +187,39 @@ date "+%Y-%m-%dT%H:%M:%S"
 以下で **session id** を確定し、参照先を切り替える。
 
 ```bash
-session_name="$(tmux display-message -p '#S')"
-repo_name="$(basename "$PWD")"
-
-if [ "$session_name" = "yamibaito_${repo_name}" ]; then
-  session_id=""
-elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
-  session_id="${session_name#yamibaito_${repo_name}_}"
+# === 環境変数チェック（優先） ===
+if [ -n "${YB_PANES_PATH:-}" ] && [ -n "${YB_QUEUE_DIR:-}" ]; then
+  panes_path="$YB_PANES_PATH"
+  queue_dir="$YB_QUEUE_DIR"
+  session_id="${YB_SESSION_ID:-}"
 else
-  session_id=""
+  # === フォールバック: tmux セッション名から推論 ===
+  session_name="$(tmux display-message -p '#S')"
+  repo_name="$(basename "$PWD")"
+
+  if [ "$session_name" = "yamibaito_${repo_name}" ]; then
+    session_id=""
+  elif [[ "$session_name" == "yamibaito_${repo_name}_"* ]]; then
+    session_id="${session_name#yamibaito_${repo_name}_}"
+  else
+    session_id=""
+  fi
+
+  if [ -n "$session_id" ]; then
+    panes_path=".yamibaito/panes_${session_id}.json"
+    queue_dir=".yamibaito/queue_${session_id}"
+  else
+    panes_path=".yamibaito/panes.json"
+    queue_dir=".yamibaito/queue"
+  fi
 fi
 ```
 
-- `session_id` が空ならデフォルトの `queue/` と `panes.json` を使う。
-- `session_id` があれば `queue_<id>/` と `panes_<id>.json` を使う。
+- 判定結果の参照先は `panes_path` と `queue_dir` を使う。
+- `YB_PANES_PATH` / `YB_QUEUE_DIR` が設定されていれば、tmux セッション名の推論をスキップしてそのまま使う。
+- `YB_PANES_PATH` / `YB_QUEUE_DIR` が未設定の場合（手動起動等）は、フォールバックとして tmux セッション名から `session_id` を推論する。
+- `session_id` が空ならデフォルトで `panes_path=.yamibaito/panes.json` と `queue_dir=.yamibaito/queue` を使う。
+- `session_id` があれば `panes_path=.yamibaito/panes_<id>.json` と `queue_dir=.yamibaito/queue_<id>` を使う。
 - `yb run-worker` / `yb collect` / `yb dispatch` は `--session <id>` を必ず付ける。
 - 期待した形式にならない場合は勝手に推測せず、判断保留で親分に確認する。
 
@@ -274,6 +298,9 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 4. 起こされたら **全報告ファイルをスキャン**（`.yamibaito/queue/reports/worker_*_report.yaml`）。
 5. 状況把握してから `yb collect` で dashboard 更新 → 親分に send-keys で報告。
 
+親分への報告は、対象 cmd_id の全 worker タスクが完了してから行え。
+途中経過は dashboard.md の更新に留め、親分ペインへの send-keys は全完了時のみ実行すること。
+
 ## 🔴 同一ファイル・同一出力の割当禁止（RACE-001）
 
 ```text
@@ -305,7 +332,7 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 
 - 更新は `yb collect --repo <repo_root>`（または `scripts/yb_collect.sh`）で行う。
 - タスク分解後に若衆を起こした直後、あるいは報告受信後にまとめて実行する。
-- 更新したら、親分ペインに「若衆の報告をまとめた。dashboard を見てくれ。」と send-keys（2回に分ける）で知らせる。
+- 途中経過は dashboard.md 更新で可視化し、対象 cmd_id の全 worker タスク完了後のみ親分ペインに「若衆の報告をまとめた。dashboard を見てくれ。」と send-keys（2回に分ける）で知らせる。
 
 ## スキル化フロー（仕組み化のタネ）
 

@@ -28,7 +28,7 @@ if [ -n "$session_id" ]; then
 fi
 
 REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" python3 - <<'PY'
-import os, json, datetime
+import os, json, datetime, subprocess, sys
 
 repo_root = os.environ["REPO_ROOT"]
 session_suffix = os.environ.get("SESSION_SUFFIX", "")
@@ -43,12 +43,17 @@ queue_rel = os.path.relpath(queue_dir, repo_root)
 
 # 若衆の名前マッピングを読み込む（worker_001 -> "銀次" など）
 worker_names = {}
+panes_data = {}
 if os.path.exists(panes_file):
     try:
         with open(panes_file, "r", encoding="utf-8") as f:
             panes_data = json.load(f)
+            if not isinstance(panes_data, dict):
+                panes_data = {}
             worker_names = panes_data.get("worker_names", {})
-    except (json.JSONDecodeError, KeyError):
+            if not isinstance(worker_names, dict):
+                worker_names = {}
+    except (json.JSONDecodeError, OSError):
         pass
 
 def get_worker_display_name(worker_id):
@@ -95,6 +100,35 @@ for i in range(1, worker_count + 1):
         idle_workers.append(worker_id)
     else:
         tasks.append(task)
+
+# 現在の cmd_id を特定し、その cmd 配下 task が全完了か判定
+completion_statuses = {"done", "completed"}
+task_candidates = []
+for t in tasks:
+    status = (t.get("status") or "").lower()
+    parent_cmd_id = t.get("parent_cmd_id")
+    if status == "idle":
+        continue
+    if not parent_cmd_id or parent_cmd_id == "null":
+        continue
+    task_candidates.append({
+        "parent_cmd_id": parent_cmd_id,
+        "status": status,
+        "assigned_at": t.get("assigned_at") or "",
+    })
+
+current_cmd_id = None
+all_tasks_completed_for_current_cmd = False
+if task_candidates:
+    active_tasks = [t for t in task_candidates if t["status"] in ("pending", "in_progress")]
+    if active_tasks:
+        current_cmd_id = max(active_tasks, key=lambda t: t["assigned_at"])["parent_cmd_id"]
+    else:
+        current_cmd_id = max(task_candidates, key=lambda t: t["assigned_at"])["parent_cmd_id"]
+    current_cmd_tasks = [t for t in task_candidates if t["parent_cmd_id"] == current_cmd_id]
+    all_tasks_completed_for_current_cmd = bool(current_cmd_tasks) and all(
+        t["status"] in completion_statuses for t in current_cmd_tasks
+    )
 
 reports = []
 for report_path in list_files(reports_dir, "_report.yaml"):
@@ -259,6 +293,21 @@ for r in reports:
 
 with open(index_file, "w", encoding="utf-8") as f:
     json.dump(index_payload, f, ensure_ascii=False, indent=2)
+
+# dashboard 更新とは分離し、全完了時のみ親分へ報告
+if current_cmd_id and all_tasks_completed_for_current_cmd:
+    session = panes_data.get("session")
+    oyabun = panes_data.get("oyabun")
+    if session and oyabun:
+        notify = (
+            f"collect complete: {current_cmd_id} の全taskが done/completed。"
+            f" dashboard.md を更新しました。"
+        )
+        try:
+            subprocess.run(["tmux", "send-keys", "-t", f"{session}:{oyabun}", notify], check=False)
+            subprocess.run(["tmux", "send-keys", "-t", f"{session}:{oyabun}", "Enter"], check=False)
+        except (FileNotFoundError, OSError) as e:
+            print(f"warning: failed to send tmux notification: {e}", file=sys.stderr)
 PY
 
 echo "yb collect: dashboard updated at $repo_root"

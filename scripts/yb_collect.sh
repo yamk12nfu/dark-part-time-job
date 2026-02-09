@@ -27,6 +27,34 @@ if [ -n "$session_id" ]; then
   session_suffix="_${session_id}"
 fi
 
+work_dir="$repo_root"
+panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
+if [ -f "$panes_file" ]; then
+  resolved_work_dir="$(PANES_FILE="$panes_file" REPO_ROOT="$repo_root" python3 - <<'PY'
+import json, os
+
+repo_root = os.environ["REPO_ROOT"]
+panes_file = os.environ["PANES_FILE"]
+work_dir = repo_root
+
+try:
+    with open(panes_file, "r", encoding="utf-8") as f:
+        panes_data = json.load(f)
+    if isinstance(panes_data, dict):
+        candidate = panes_data.get("work_dir", repo_root)
+        if isinstance(candidate, str) and candidate and os.path.isdir(candidate):
+            work_dir = candidate
+except (OSError, json.JSONDecodeError):
+    pass
+
+print(work_dir)
+PY
+)"
+  if [ -n "$resolved_work_dir" ]; then
+    work_dir="$resolved_work_dir"
+  fi
+fi
+
 REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" python3 - <<'PY'
 import os, json, datetime, subprocess, sys
 
@@ -36,7 +64,6 @@ config_file = os.path.join(repo_root, ".yamibaito/config.yaml")
 queue_dir = os.path.join(repo_root, f".yamibaito/queue{session_suffix}")
 tasks_dir = os.path.join(queue_dir, "tasks")
 reports_dir = os.path.join(queue_dir, "reports")
-dashboard_file = os.path.join(repo_root, "dashboard.md")
 index_file = os.path.join(reports_dir, "_index.json")
 panes_file = os.path.join(repo_root, f".yamibaito/panes{session_suffix}.json")
 queue_rel = os.path.relpath(queue_dir, repo_root)
@@ -55,6 +82,11 @@ if os.path.exists(panes_file):
                 worker_names = {}
     except (json.JSONDecodeError, OSError):
         pass
+
+work_dir = panes_data.get("work_dir", repo_root) if panes_data else repo_root
+if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
+    work_dir = repo_root
+dashboard_file = os.path.join(work_dir, "dashboard.md")
 
 def get_worker_display_name(worker_id):
     """worker_id から表示名を取得（名前があれば名前、なければ worker_id）"""
@@ -301,7 +333,7 @@ if current_cmd_id and all_tasks_completed_for_current_cmd:
     if session and oyabun:
         notify = (
             f"collect complete: {current_cmd_id} の全taskが done/completed。"
-            f" dashboard.md を更新しました。"
+            f" {work_dir}/dashboard.md を更新しました。"
         )
         try:
             subprocess.run(["tmux", "send-keys", "-t", f"{session}:{oyabun}", notify], check=False)
@@ -310,4 +342,4 @@ if current_cmd_id and all_tasks_completed_for_current_cmd:
             print(f"warning: failed to send tmux notification: {e}", file=sys.stderr)
 PY
 
-echo "yb collect: dashboard updated at $repo_root"
+echo "yb collect: dashboard updated at $work_dir"

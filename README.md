@@ -9,6 +9,7 @@
 - `codex` CLI
 - `python3`
 - `git`
+- `git-gtr`（[git-worktree-runner](https://github.com/coderabbitai/git-worktree-runner)）— worktree 連動に必要
 
 ## 環境ごとに修正が必要な箇所
 
@@ -94,9 +95,13 @@ tmux attach -t yamibaito_<repo>
 | `yb init` | 初期ファイル生成 |
 | `yb start` | tmuxセッション生成 + 親分/若頭起動 |
 | `yb restart` | 既存セッションを破棄して再起動 |
+| `yb stop` | セッション終了 + worktree削除 |
+| `yb worktree list` | セッションとworktreeの対応一覧を表示 |
 | `yb dispatch` | 若衆へ割当済みタスクを起動（手動用） |
 | `yb collect` | `dashboard.md` を再生成 |
 | `yb plan` | 計画作成セッションを新規起動 |
+| `yb plan-review` | 計画書のレビューを Codex で実行 |
+| `yb run-worker` | 若衆（ワーカー）のタスクを実行（内部用） |
 
 ---
 
@@ -119,7 +124,7 @@ yb init --repo /path/to/repo   # 別リポジトリを対象
    - `config.yaml`、`director_to_planner.yaml`、`dashboard.md`
 3. オーケストレータからプロンプトファイルをコピー（常に最新版で上書き）
    - `oyabun.md`、`waka.md`、`wakashu.md`
-4. `config.yaml` の `codex_count`（デフォルト 3）に応じてワーカーファイルを生成
+4. `config.yaml` の `codex_count`（デフォルト 5）に応じてワーカーファイルを生成
    - `tasks/worker_001.yaml` 〜 `tasks/worker_XXX.yaml`
    - `reports/worker_001_report.yaml` 〜 `reports/worker_XXX_report.yaml`
    - `reports/_index.json`
@@ -166,6 +171,8 @@ tmux セッションを作成し、親分・若頭の Claude インスタンス�
 yb start                        # カレントディレクトリを対象
 yb start --repo /path/to/repo   # 別リポジトリを対象
 yb start --repo /path/to/repo --session feature-x   # セッションIDを指定
+yb start --repo /path/to/repo --session feature-x --from main     # main ブランチベースの worktree
+yb start --repo /path/to/repo --session feature-x --no-worktree   # worktree なし（従来動作）
 ```
 
 **前提条件:**
@@ -177,6 +184,7 @@ yb start --repo /path/to/repo --session feature-x   # セッションIDを指定
 
 1. `yamibaito_<リポジトリ名>`（`--session` 指定時は `yamibaito_<リポジトリ名>_<id>`）という tmux セッションを作成
 2. 左右 50:50 の2カラムレイアウトでペインを配置（左カラム内は oyabun 60% / waka 40% で縦分割、右カラムはワーカーを等分割）
+2.5. `--session` 指定時（かつ `--no-worktree` 未指定）、`git gtr new` で worktree を作成し、各ペインの作業ディレクトリを worktree に切り替え
 
 ```
 ┌───────────────────┬────────────────┐
@@ -197,6 +205,18 @@ yb start --repo /path/to/repo --session feature-x   # セッションIDを指定
 5. 全ペインの環境を初期化（`PATH` にオーケストレータの `bin` を追加、リポジトリルートへ `cd`、画面クリア）
 6. 親分 → 若頭の順に `claude --dangerously-skip-permissions` を起動し、それぞれのプロンプトファイルを読み込ませる
 7. tmux 外から実行した場合、自動的にセッションにアタッチ
+
+**新オプション:**
+
+| オプション | 説明 |
+| --- | --- |
+| `--from <ref>` | worktree の base ブランチを明示指定 |
+| `--no-worktree` | worktree を作成せず従来動作 |
+
+**worktree 連動の概要:**
+
+- `--session <id>` ごとに独立した worktree を持てるため、並行作業時の衝突を減らせる
+- `yb restart` / `yb stop` から同じ `session id` を指定して、セッションと worktree を一体で操作できる
 
 **起動後の参加方法:**
 
@@ -251,6 +271,8 @@ fi
 yb restart                        # カレントディレクトリを対象
 yb restart --repo /path/to/repo   # 別リポジトリを対象
 yb restart --repo /path/to/repo --session feature-x
+yb restart --repo /path/to/repo --session feature-x --delete-worktree  # worktree も削除して再作成
+yb restart --repo /path/to/repo --session feature-x --from develop     # --from を yb start に転送
 ```
 
 **実行されること:**
@@ -258,7 +280,56 @@ yb restart --repo /path/to/repo --session feature-x
 1. `yamibaito_<リポジトリ名>`（`--session` 指定時は `yamibaito_<リポジトリ名>_<id>`）セッションが存在すれば `tmux kill-session` で終了
 2. `yb start` を呼び出して新しいセッションを構築
 
+**新オプション:**
+
+| オプション | 説明 |
+| --- | --- |
+| `--delete-worktree` | 既存 worktree を削除して再作成 |
+| `--from <ref>` | yb start に転送。worktree 再作成時の base 指定 |
+
 **注意:** セッション内の全プロセス（Claude インスタンス含む）が強制終了される。キュー（`.yamibaito/queue/` または `.yamibaito/queue_<id>/`）やレポート等のファイルは保持される。
+
+---
+
+### `yb stop`
+
+セッションを完全終了し、worktree を削除する。
+
+```bash
+yb stop --session feature-x                        # tmux kill + worktree 削除
+yb stop --session feature-x --keep-worktree        # tmux kill のみ。worktree は残す
+yb stop --session feature-x --delete-branch        # worktree 削除時にブランチも削除
+```
+
+**実行されること:**
+
+1. tmux セッションを kill-session で終了
+2. `--keep-worktree` 未指定時、`git gtr rm` で worktree を削除
+3. `--delete-branch` 指定時、worktree のブランチも削除
+
+**`yb restart` との違い:**
+
+- `yb restart`: セッションを壊して再起動する（worktree はデフォルトで保持）
+- `yb stop`: セッションを完全に終了する（worktree はデフォルトで削除）
+
+---
+
+### `yb worktree list`
+
+セッションと worktree の対応一覧を表示する。
+
+```bash
+yb worktree list
+yb worktree list --repo /path/to/repo
+```
+
+**出力例:**
+```
+SESSION                        BRANCH                         WORKTREE PATH                                      STATUS
+------------------------------------------------------------------------------------------------------------------------
+yamibaito_myrepo_feature-x     yamibaito/feature-x            /path/to/yamibaito-feature-x                       active
+yamibaito_myrepo_bugfix-y      yamibaito/bugfix-y             /path/to/yamibaito-bugfix-y                        stopped
+```
 
 ---
 

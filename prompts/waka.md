@@ -89,6 +89,7 @@ files:
   panes: ".yamibaito/panes.json"
   dashboard: "dashboard.md"
   skills_dir: ".yamibaito/skills"
+  note_worktree: "worktree セッション時は YB_WORK_DIR が作業ディレクトリを指す"
 
 note:
   session_paths: "複数セッション時は queue_<id>/ と panes_<id>.json を使う"
@@ -188,14 +189,21 @@ date "+%Y-%m-%dT%H:%M:%S"
 
 ```bash
 # === 環境変数チェック（優先） ===
-if [ -n "${YB_PANES_PATH:-}" ] && [ -n "${YB_QUEUE_DIR:-}" ]; then
+if [ -n "${YB_PANES_PATH:-}" ] && [ -n "${YB_QUEUE_DIR:-}" ] && [ -n "${YB_WORK_DIR:-}" ]; then
   panes_path="$YB_PANES_PATH"
   queue_dir="$YB_QUEUE_DIR"
+  work_dir="${YB_WORK_DIR:-}"
+  session_id="${YB_SESSION_ID:-}"
+elif [ -n "${YB_PANES_PATH:-}" ] && [ -n "${YB_QUEUE_DIR:-}" ]; then
+  panes_path="$YB_PANES_PATH"
+  queue_dir="$YB_QUEUE_DIR"
+  work_dir="$PWD"
   session_id="${YB_SESSION_ID:-}"
 else
   # === フォールバック: tmux セッション名から推論 ===
   session_name="$(tmux display-message -p '#S')"
-  repo_name="$(basename "$PWD")"
+  repo_name="$(basename "${YB_REPO_ROOT:-$PWD}")"
+  work_dir="$PWD"
 
   if [ "$session_name" = "yamibaito_${repo_name}" ]; then
     session_id=""
@@ -215,13 +223,35 @@ else
 fi
 ```
 
-- 判定結果の参照先は `panes_path` と `queue_dir` を使う。
-- `YB_PANES_PATH` / `YB_QUEUE_DIR` が設定されていれば、tmux セッション名の推論をスキップしてそのまま使う。
+- 判定結果の参照先は `panes_path` / `queue_dir` / `work_dir` を使う。
+- `YB_PANES_PATH` / `YB_QUEUE_DIR` / `YB_WORK_DIR` を優先し、設定されていれば tmux セッション名の推論をスキップしてそのまま使う（`YB_WORK_DIR` 未設定時は `work_dir=$PWD`）。
 - `YB_PANES_PATH` / `YB_QUEUE_DIR` が未設定の場合（手動起動等）は、フォールバックとして tmux セッション名から `session_id` を推論する。
 - `session_id` が空ならデフォルトで `panes_path=.yamibaito/panes.json` と `queue_dir=.yamibaito/queue` を使う。
 - `session_id` があれば `panes_path=.yamibaito/panes_<id>.json` と `queue_dir=.yamibaito/queue_<id>` を使う。
+- `work_dir` は実際の作業ディレクトリを指す（worktree 使用時は worktree パス、未使用時は repo_root）。
+- `work_dir` は若衆の作業ディレクトリ指定や `dashboard.md` の参照先として使う。
 - `yb run-worker` / `yb collect` / `yb dispatch` は `--session <id>` を必ず付ける。
 - 期待した形式にならない場合は勝手に推測せず、判断保留で親分に確認する。
+
+## 🔴 worktree セッション時の注意事項
+
+`YB_WORK_DIR` 環境変数が設定されている場合、そのセッションは worktree 内で動作している。
+
+### 若頭が意識すべきこと
+
+- **作業ディレクトリ**: 若衆の codex は `$YB_WORK_DIR`（worktree）内で動作する
+- **オーケストレータ設定**: `.yamibaito/` は元リポ（`$YB_REPO_ROOT`）にある。worktree には存在しない
+- **queue/task/report**: 元リポの `.yamibaito/queue_<id>/` を参照する（従来通り）
+- **dashboard.md**: `$YB_WORK_DIR/dashboard.md` に書かれる（worktree で自然分離）
+- **git 操作**: worktree 内では worktree のブランチ（`$YB_WORKTREE_BRANCH`）で動作する
+
+### 環境変数一覧（worktree 関連）
+
+| 変数 | 説明 |
+| --- | --- |
+| `YB_WORK_DIR` | 実際の作業ディレクトリ（worktree or repo_root） |
+| `YB_WORKTREE_BRANCH` | worktree のブランチ名（未使用時は空） |
+| `YB_REPO_ROOT` | 元リポジトリのパス（常に元リポを指す） |
 
 ## 🔴 tmux send-keys の使用方法（超重要）
 

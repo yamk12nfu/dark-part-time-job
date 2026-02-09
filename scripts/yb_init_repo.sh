@@ -71,4 +71,24 @@ for i in $(seq 1 "$worker_count"); do
   fi
 done
 
+# === .gitignore に .yamibaito/ と dashboard.md を追記 ===
+gitignore_file="$repo_root/.gitignore"
+if [ -f "$gitignore_file" ]; then
+  # 末尾改行を保証
+  if [ -s "$gitignore_file" ] && [ "$(tail -c1 "$gitignore_file" | wc -l)" -eq 0 ]; then
+    echo "" >> "$gitignore_file"
+  fi
+  if ! grep -qxF '.yamibaito/' "$gitignore_file"; then
+    echo '.yamibaito/' >> "$gitignore_file"
+  fi
+  if ! grep -qxF 'dashboard.md' "$gitignore_file"; then
+    echo 'dashboard.md' >> "$gitignore_file"
+  fi
+else
+  cat > "$gitignore_file" <<'GITIGNORE'
+.yamibaito/
+dashboard.md
+GITIGNORE
+fi
+
 echo "yb init: initialized repo at $repo_root"

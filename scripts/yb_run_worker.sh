@@ -60,30 +60,46 @@ with open(task_file, "r", encoding="utf-8") as f:
 sandbox_match = re.search(r'^\s*sandbox:\s*(\S+)', content, re.MULTILINE)
 sandbox = sandbox_match.group(1).strip('"\'') if sandbox_match else "workspace-write"
 
+# Read work_dir from panes.json
+panes_path = os.path.join(repo_root, ".yamibaito", f"panes{panes_suffix}.json")
+work_dir = repo_root  # default
+if os.path.exists(panes_path):
+    try:
+        with open(panes_path, "r", encoding="utf-8") as f:
+            panes_data = json.load(f)
+        if isinstance(panes_data, dict):
+            work_dir = panes_data.get("work_dir", repo_root)
+    except (json.JSONDecodeError, OSError):
+        pass
+if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
+    work_dir = repo_root
+
 cmd = ["codex", "exec", "--sandbox", sandbox, "-"]
 proc = subprocess.Popen(
     cmd,
     stdin=subprocess.PIPE,
     stdout=sys.stdout,
     stderr=sys.stderr,
-    cwd=repo_root,
+    cwd=work_dir,
     text=True,
 )
 proc.communicate(content)
 exit_code = proc.returncode
 
-panes_path = os.path.join(repo_root, ".yamibaito", f"panes{panes_suffix}.json")
 try:
     with open(panes_path, "r", encoding="utf-8") as f:
         panes = json.load(f)
-    session = panes.get("session")
-    waka = panes.get("waka")
-    if session and waka:
-        notify = "worker finished; please run: yb collect --repo " + repo_root
-        if session_id:
-            notify += " --session " + session_id
-        subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", notify], check=False)
-        subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", "Enter"], check=False)
+    if isinstance(panes, dict):
+        workers = panes.get("workers", {})
+        if isinstance(workers, dict):
+            session = panes.get("session")
+            waka = panes.get("waka")
+            if session and waka:
+                notify = "worker finished; please run: yb collect --repo " + repo_root
+                if session_id:
+                    notify += " --session " + session_id
+                subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", notify], check=False)
+                subprocess.run(["tmux", "send-keys", "-t", f"{session}:{waka}", "Enter"], check=False)
 except FileNotFoundError:
     pass
 except json.JSONDecodeError:

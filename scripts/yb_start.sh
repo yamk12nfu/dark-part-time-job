@@ -5,6 +5,8 @@ ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 repo_root="."
 session_id=""
+from_ref=""
+no_worktree=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -14,6 +16,14 @@ while [[ $# -gt 0 ]]; do
     --session)
       session_id="$2"
       shift 2
+      ;;
+    --from)
+      from_ref="$2"
+      shift 2
+      ;;
+    --no-worktree)
+      no_worktree=true
+      shift
       ;;
     *)
       echo "Unknown arg: $1" >&2
@@ -40,6 +50,65 @@ fi
 worker_count=$(grep -E "^\\s*codex_count:" "$config_file" | awk '{print $2}')
 if [ -z "$worker_count" ]; then
   worker_count=3
+fi
+
+# === worktree 設定の読み取り ===
+wt_enabled=$(grep -E "^\s*enabled:" "$config_file" | head -1 | awk '{print $2}' || true)
+wt_default_base=$(grep -E "^\s*default_base:" "$config_file" | head -1 | awk '{print $2}' | tr -d '"' || true)
+wt_branch_prefix=$(grep -E "^\s*branch_prefix:" "$config_file" | head -1 | awk '{print $2}' | tr -d '"' || true)
+wt_enabled="${wt_enabled:-true}"
+wt_branch_prefix="${wt_branch_prefix:-yamibaito}"
+
+# === worktree 作成 ===
+worktree_root=""
+worktree_branch=""
+work_dir="$repo_root"
+
+if [ -n "$session_id" ] && [ "$no_worktree" = "false" ] && [ "$wt_enabled" = "true" ]; then
+  # gtr 存在チェック
+  if ! command -v git-gtr &>/dev/null; then
+    echo "gtr が見つかりません。インストールしてください:" >&2
+    echo "  git clone https://github.com/coderabbitai/git-worktree-runner.git" >&2
+    echo "  cd git-worktree-runner && ./install.sh" >&2
+    exit 1
+  fi
+
+  # base ブランチの決定
+  if [ -n "$from_ref" ]; then
+    base="$from_ref"
+  elif [ -n "$wt_default_base" ]; then
+    base="$wt_default_base"
+  else
+    base="$(git -C "$repo_root" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')"
+    base="${base:-$(git -C "$repo_root" branch --show-current)}"
+  fi
+
+  worktree_branch="${wt_branch_prefix}/${session_id}"
+
+  # 既存 worktree チェック（T9 統合: 再利用ロジック）
+  if git -C "$repo_root" gtr list --porcelain 2>/dev/null | awk -F'\t' '{print $2}' | grep -qx "$worktree_branch"; then
+    echo "既存 worktree を再利用: $worktree_branch"
+    worktree_root="$(cd "$(git -C "$repo_root" gtr go "$worktree_branch")" && pwd)"
+  else
+    echo "worktree を作成: $worktree_branch (base: $base)"
+    git -C "$repo_root" gtr new "$worktree_branch" --from "$base" --yes
+    worktree_root="$(cd "$(git -C "$repo_root" gtr go "$worktree_branch")" && pwd)"
+  fi
+
+  work_dir="$worktree_root"
+fi
+
+if [ -n "$worktree_root" ]; then
+  if [ -L "$worktree_root/.yamibaito" ]; then
+    if [ ! -e "$worktree_root/.yamibaito" ]; then
+      rm "$worktree_root/.yamibaito"
+      ln -s "$repo_root/.yamibaito" "$worktree_root/.yamibaito"
+      echo "Linked .yamibaito/ -> $repo_root/.yamibaito"
+    fi
+  elif [ ! -e "$worktree_root/.yamibaito" ]; then
+    ln -s "$repo_root/.yamibaito" "$worktree_root/.yamibaito"
+    echo "Linked .yamibaito/ -> $repo_root/.yamibaito"
+  fi
 fi
 
 queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
@@ -122,13 +191,16 @@ fi
 
 pane_map="$repo_root/.yamibaito/panes${session_suffix}.json"
 
-SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" python3 - <<'PY'
+SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" WORKTREE_ROOT="$worktree_root" WORK_DIR="$work_dir" WORKTREE_BRANCH="$worktree_branch" python3 - <<'PY'
 import json
 import os
 import subprocess
 
 session = os.environ["SESSION_NAME"]
 repo_root = os.environ["REPO_ROOT"]
+worktree_root = os.environ.get("WORKTREE_ROOT", "")
+work_dir_val = os.environ.get("WORK_DIR", repo_root)
+worktree_branch = os.environ.get("WORKTREE_BRANCH", "")
 worker_count = int(os.environ["WORKER_COUNT"])
 pane_map = os.environ["PANE_MAP"]
 worker_names = [
@@ -180,6 +252,9 @@ for i in range(worker_count):
 mapping = {
     "session": session,
     "repo_root": repo_root,
+    "worktree_root": worktree_root if worktree_root else None,
+    "work_dir": work_dir_val,
+    "worktree_branch": worktree_branch if worktree_branch else None,
     "oyabun": f"0.{oyabun}",
     "waka": f"0.{waka}",
     "workers": workers,
@@ -204,7 +279,7 @@ for name, pane in workers.items():
 PY
 
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
-  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && export YB_SESSION_ID=\"$session_id\" && export YB_PANES_PATH=\"$pane_map\" && export YB_QUEUE_DIR=\"$queue_dir\" && cd \"$repo_root\" && clear" C-m
+  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && export YB_SESSION_ID=\"$session_id\" && export YB_PANES_PATH=\"$pane_map\" && export YB_QUEUE_DIR=\"$queue_dir\" && export YB_WORK_DIR=\"$work_dir\" && export YB_WORKTREE_BRANCH=\"$worktree_branch\" && export YB_REPO_ROOT=\"$repo_root\" && cd \"$work_dir\" && clear" C-m
 done
 
 oyabun_pane=$(REPO_ROOT="$repo_root" PANE_MAP="$pane_map" python3 - <<'PY'

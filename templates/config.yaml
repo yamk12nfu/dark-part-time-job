@@ -1,6 +1,11 @@
 workers:
   codex_count: 5
 
+worktree:
+  enabled: true
+  default_base: ""
+  branch_prefix: "yamibaito"
+
 codex:
   sandbox: workspace-write
   approval: on-request

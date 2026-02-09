@@ -9,13 +9,15 @@ yb - yamibaito orchestrator
 
 Usage:
   yb init [--repo <path>]
-  yb start [--repo <path>] [--session <id>]
-  yb restart [--repo <path>] [--session <id>]
+  yb start [--repo <path>] [--session <id>] [--from <ref>] [--no-worktree]
+  yb restart [--repo <path>] [--session <id>] [--delete-worktree] [--from <ref>]
   yb dispatch [--repo <path>] [--session <id>]
   yb collect [--repo <path>] [--session <id>]
   yb plan [--repo <path>] [--title <short-title>]
   yb plan-review [--repo <path>] [--plan-dir <path>]
   yb run-worker --repo <path> --worker <id> [--session <id>]
+  yb stop [--repo <path>] [--session <id>] [--keep-worktree] [--delete-branch]
+  yb worktree list [--repo <path>]
   yb help
 EOF
 }
@@ -47,6 +49,22 @@ case "$cmd" in
     ;;
   run-worker)
     "$ORCH_ROOT/scripts/yb_run_worker.sh" "$@"
+    ;;
+  stop)
+    "$ORCH_ROOT/scripts/yb_stop.sh" "$@"
+    ;;
+  worktree)
+    subcmd="${1:-}"
+    shift || true
+    case "$subcmd" in
+      list)
+        "$ORCH_ROOT/scripts/yb_worktree_list.sh" "$@"
+        ;;
+      *)
+        echo "Unknown worktree command: $subcmd (available: list)" >&2
+        exit 1
+        ;;
+    esac
     ;;
   help|-h|--help)
     usage

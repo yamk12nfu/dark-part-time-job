@@ -54,6 +54,7 @@ workflow:
 files:
   task: ".yamibaito/queue/tasks/worker_{N}.yaml"
   report: ".yamibaito/queue/reports/worker_{N}_report.yaml"
+  note_worktree: "worktree セッション時は作業ディレクトリが worktree 内になる"
 
 note:
   session_paths: "複数セッション時は queue_<id>/ を使う"
@@ -231,6 +232,25 @@ report:
 3. 必要なら対象ファイル（`target_path` 等）を読む。
 4. `task.persona` を確認し、そのペルソナで作業する。
 5. 読み込み完了を自分で整理してから作業開始する。
+
+## 🔴 worktree セッション時の注意事項
+
+worktree セッションで起動された場合、以下の点に注意せよ。
+
+### 作業ディレクトリについて
+- codex の cwd は **worktree 内**（`$YB_WORK_DIR`）に設定されている
+- ファイルの読み書きは worktree 内で行われる
+- worktree は元リポとは別ブランチで動作している
+
+### .yamibaito/ について
+- `.yamibaito/` ディレクトリは元リポ（`$YB_REPO_ROOT`）にある
+- worktree 内には `.yamibaito/` は存在しない（`.gitignore` で除外済み）
+- task ファイルや report ファイルのパスは `$YB_QUEUE_DIR` 環境変数で指定されている
+
+### git 操作について
+- worktree 内での `git` 操作は worktree のブランチに対して行われる
+- `git checkout` で別ブランチに切り替えてはいけない（worktree の制約）
+- コミット・プッシュは worktree のブランチで行う
 
 ## 必須ルール（要約）
 

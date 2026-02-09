@@ -45,11 +45,24 @@ orch_root = os.environ["ORCH_ROOT"]
 queue_dir = os.environ["QUEUE_DIR"]
 session_id = os.environ.get("SESSION_ID", "")
 
-with open(panes_file, "r", encoding="utf-8") as f:
-    panes = json.load(f)
+try:
+    with open(panes_file, "r", encoding="utf-8") as f:
+        panes_data = json.load(f)
+    if not isinstance(panes_data, dict):
+        raise TypeError("panes map must be a JSON object")
+    session = panes_data["session"]
+    workers = panes_data["workers"]
+    if not isinstance(session, str) or not session:
+        raise TypeError("session must be a non-empty string")
+    if not isinstance(workers, dict):
+        raise TypeError("workers must be a JSON object")
+except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
+    print(f"Invalid panes map: {panes_file}: {e}", file=sys.stderr)
+    sys.exit(1)
 
-session = panes["session"]
-workers = panes.get("workers", {})
+work_dir = panes_data.get("work_dir", repo_root)
+if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
+    work_dir = repo_root
 
 def read_task_status(task_path):
     if not os.path.exists(task_path):
@@ -71,7 +84,7 @@ for worker_id, pane in workers.items():
         continue
     if status not in ("assigned", "in_progress"):
         continue
-    cmd = f'cd "{repo_root}" && "{orch_root}/scripts/yb_run_worker.sh" --repo "{repo_root}" --worker "{worker_id}"'
+    cmd = f'cd "{work_dir}" && "{orch_root}/scripts/yb_run_worker.sh" --repo "{repo_root}" --worker "{worker_id}"'
     if session_id:
         cmd += f' --session "{session_id}"'
     subprocess.run(["tmux", "send-keys", "-t", f"{session}:{pane}", cmd], check=False)

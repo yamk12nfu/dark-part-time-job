@@ -40,7 +40,7 @@
 `bin/yb` に `skill` サブコマンドを追加し、`scripts/yb_skill.sh` へ委譲する。`yb skill init` と `yb skill validate` を最小機能で先行実装する。
 
 - データ構造（index）:
-`index.yaml` は `schema_version` と `skills` 配列を持つ。1 エントリは `name/path/status/owner/created_at/updated_at/source` を保持する。
+`index.yaml` は `schema_version` と `skills` 配列を持つ。1 エントリの必須フィールドは `name/path/status/owner/created_at/updated_at` で、`source` は任意（optional）フィールドとする。`source` が存在する場合はサブフィールド `report` と `task_id` を検証するが、`source` 自体の省略は許容する（手動作成の skill に対応するため）。
 
 ```yaml
 schema_version: 1
@@ -51,7 +51,7 @@ skills:
     owner: "worker_004"
     created_at: "2026-02-12T01:00:00+09:00"
     updated_at: "2026-02-12T01:00:00+09:00"
-    source:
+    source:  # optional
       report: "worker_004_report.yaml"
       task_id: "cmd_0001_D"
 ```

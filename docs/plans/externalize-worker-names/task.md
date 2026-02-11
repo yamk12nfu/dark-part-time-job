@@ -10,8 +10,8 @@ worker 表示名（例: 銀次、龍）が `yb_start.sh` の固定配列に埋�
   - `worker_name_map[wid] = worker_names[i]` として `panes*.json` に表示名を保存。
 - `scripts/yb_start.sh:277-278`
   - pane タイトル表示時に `worker_names[idx]` を使い、範囲外は `worker_id` フォールバック。
-- `.yamibaito/config.yaml:1-2`
-  - `workers.codex_count` のみ定義され、表示名の設定項目が存在しない。
+- `templates/config.yaml:1-2`（テンプレート）/ `.yamibaito/config.yaml`（ランタイム、`yb init-repo` で生成）
+  - `workers.codex_count` のみ定義され、表示名の設定項目が存在しない。なお `.yamibaito/config.yaml` はリポジトリ追跡外のランタイムファイルであり、テンプレートソースは `templates/config.yaml`。
 - `scripts/yb_collect.sh:71-83`, `scripts/yb_collect.sh:91-96`
   - `panes*.json` の `worker_names` を参照して dashboard 表示名を組み立てるため、起動時マッピングが唯一の表示ソースになる。
 
@@ -41,7 +41,10 @@ worker 表示名（例: 銀次、龍）が `yb_start.sh` の固定配列に埋�
 
 - `scripts/yb_start.sh` で `codex_count` と同様に config を読み取るが、表示名は YAML 配列対応が必要なため専用パーサを追加する。
 - 方針は `worker_003_report.yaml` の提案（`workers.display_names` 追加 + 未指定時フォールバック）に合わせる。
-- パーサ実装は `python3` 埋め込みで行い、`workers.display_names` を JSON 配列として Bash 側へ返す（PyYAML 非依存）。
+- パーサ実装は `python3` 埋め込み（PyYAML 非依存）で行い、`workers.display_names` を JSON 配列として Bash 側へ返す。具体的には以下の方式を採用する:
+  - **方式**: 埋め込み Python で簡易 YAML sequence パーサを実装する。`config.yaml` をテキストとして読み込み、`workers:` ブロック内の `display_names:` に続く `- value` 行を正規表現 `^\s+- (.+)$` で抽出し、JSON 配列として stdout に出力する。
+  - **対応 YAML サブセット**: 単純な sequence items（`- value` 形式）、2〜4 スペースインデント。anchor/alias (`*`, `&`)、tag (`!`)、flow sequence (`[a, b]`) は非対応とし、検出時は warning + フォールバック。
+  - **制約と trade-off**: PyYAML 依存を避けるためフル YAML 仕様には対応しない。`config.yaml` の `display_names` は単純文字列リストに限定する前提。将来的に複雑な構造が必要になった場合は PyYAML 依存追加を再検討する。
 - 既存 Python ブロック (`scripts/yb_start.sh:194-279`) へ `WORKER_DISPLAY_NAMES_JSON` を環境変数で渡し、`worker_name_map` と pane タイトル決定を統一ロジックで処理する。
 
 関数/構造体設計:
@@ -69,7 +72,7 @@ worker 表示名（例: 銀次、龍）が `yb_start.sh` の固定配列に埋�
 - `scripts/yb_collect.sh`: コード変更不要（`panes.worker_names` 読み取りを継続）。
 
 ## 5. 実装ステップ
-1. `.yamibaito/config.yaml` に `workers.display_names` のサンプル定義を追加する（既存 `codex_count` と同階層）。変更ファイル: `.yamibaito/config.yaml`。
+1. `templates/config.yaml` に `workers.display_names` のサンプル定義を追加する（既存 `codex_count` と同階層）。変更ファイル: `templates/config.yaml`（テンプレート）。ランタイムの `.yamibaito/config.yaml` は `yb init-repo` で再生成される。
 2. `scripts/yb_start.sh` に `load_display_names_json()` を追加し、config から表示名配列を取得できるようにする。変更ファイル: `scripts/yb_start.sh`。
 3. `scripts/yb_start.sh` の Python 実行環境変数に `WORKER_DISPLAY_NAMES_JSON` を追加する。変更ファイル: `scripts/yb_start.sh`。
 4. `scripts/yb_start.sh` の Python ブロック（現 `worker_names` 固定配列部分）を、設定値 + 既定値フォールバック方式へ置換する。変更ファイル: `scripts/yb_start.sh`。

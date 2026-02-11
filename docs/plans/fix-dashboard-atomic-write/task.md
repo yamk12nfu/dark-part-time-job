@@ -55,7 +55,7 @@ lock timeout は非0終了（例: exit 2）し、競合中であることを明�
 ## 5. 実装ステップ
 1. `yb_collect.sh` に lock パラメータ（`--lock-timeout`）と lock ファイルパス決定処理を追加する。変更ファイル: `scripts/yb_collect.sh`
 2. report 読み取り・dashboard レンダリング・ファイル書き込みを `flock` 区間内に配置し、read→render→write を同一ロック下で実行する。変更ファイル: `scripts/yb_collect.sh`
-3. Python 側へ `atomic_write_text` / `atomic_write_json` ヘルパーを追加する。変更ファイル: `scripts/yb_collect.sh`
+3. Python 側へ `atomic_write_text` / `atomic_write_json` ヘルパーを追加する。変更ファイル: `scripts/yb_collect.sh` 内の埋め込み Python heredoc ブロック（現行の `python3 -c` / `python3 << 'PYEOF'` 区間）に関数定義を追加する。外部 `.py` ファイルの新規作成は行わない。
 4. `dashboard.md` の直書き（`scripts/yb_collect.sh:262-263` 相当）を atomic write へ置換する。変更ファイル: `scripts/yb_collect.sh`
 5. `_index.json` と task YAML リセットの直書き（`scripts/yb_collect.sh:309-327` 相当）を atomic write へ置換する。変更ファイル: `scripts/yb_collect.sh`
 6. lock 競合時メッセージと終了コードを統一し、運用者向けに挙動を明確化する。変更ファイル: `scripts/yb_collect.sh`

@@ -105,5 +105,5 @@ skills:
 ## 7. リスクと注意点
 - 後方互換性: `yb collect` が index 読み込みを前提にすると既存環境で失敗しうるため、index 不在時は従来挙動へフォールバックする。
 - 命名衝突: skill 名の正規化ルールが曖昧だと重複登録や誤判定が起きる。`[a-z0-9-]+` に制限し、case-insensitive で重複検査する。
-- 共有ファイル競合: `index.yaml` は複数実行で競合するため、更新時ロック（`flock` もしくは atomic replace）を必須にする。
+- 共有ファイル競合: `index.yaml` は複数実行で競合するため、更新時ロック（`flock`）+ atomic replace を必須にする。
 - 他スクリプト波及: `bin/yb` のサブコマンド追加は help/usage を更新しないと運用者に発見されない。usage と README を同期する。

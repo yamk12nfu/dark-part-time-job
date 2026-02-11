@@ -59,6 +59,9 @@ skills:
 - 関数設計（`scripts/yb_skill.sh`）:
 `cmd_skill_init`（雛形生成 + index 追記）、`cmd_skill_validate`（index 構文/重複/ファイル整合性検査）、`load_skill_index`（index 読み込み）、`save_skill_index`（排他更新）を分離する。YAML 更新は Python ヘルパーを呼び出し、Bash の文字列処理依存を避ける。
 
+- YAML 更新時の排他制御:
+`index.yaml` の更新は `save_skill_index` 内で `"$skills_dir/.index.lock"` に対する `flock` を取得して単一 writer 化し、書き込みは同一ディレクトリの一時ファイルへ `flush + fsync` 後に `os.replace` で置換する。`flock` が使えない環境では `os.replace` の atomic replace を最低保証として partial write を防ぐ。
+
 - collect 連携:
 `scripts/yb_collect.sh:199-201` の候補抽出後に `index.yaml` を読み、`skill_candidate_name` 正規化名で登録済み照合する。未登録候補のみ dashboard の「仕組み化のタネ」に表示し、登録済み候補は `done` 側へ簡易注記する。
 

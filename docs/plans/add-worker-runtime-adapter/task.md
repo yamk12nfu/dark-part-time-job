@@ -14,7 +14,7 @@
   `workers.codex_count` と `codex.*` しかなく、worker ごとの runtime マッピングが存在しない。
 - `scripts/yb_start.sh:305`-`scripts/yb_start.sh:307`  
   親分/若頭は Claude CLI で起動しており、worker 側だけ codex 固定という非対称構成。
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:102`-`/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:124`  
+- `.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:102`-`.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:124`  
   高優先度課題として runtime 抽象化が提案済み。
 
 障害シナリオ:

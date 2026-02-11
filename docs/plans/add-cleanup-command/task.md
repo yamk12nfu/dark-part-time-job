@@ -48,6 +48,7 @@
 実装アプローチ:
 
 - 新規 `scripts/yb_cleanup.sh` で cleanup を一元化する。
+- セッション名生成ロジックは `scripts/yb_common.sh` の共有関数 `build_session_name()` に集約し、`yb_start.sh` と `yb_cleanup.sh` で共通利用する。
 - 設計根拠は `worker_002_report.yaml` の stale 寿命管理提案（TTL + active 判定 + archive 退避）を採用する。
 - 判定フロー:
   - `queue*` ディレクトリを列挙。
@@ -63,7 +64,7 @@
 - `parse_args()`
   - 引数の妥当性検証を担当。`ttl_days` が正整数でない場合は終了コード `2`。
 - `build_session_name(repo_name, session_id)`
-  - `yb_start.sh` と同形式のセッション名を生成。
+  - `scripts/yb_common.sh` に定義する共有関数。`yb_start.sh` と同形式のセッション名を生成する。
 - `is_session_active(session_name)`
   - active 判定を返す（0/1）。`tmux` 未導入時は警告を出し「非 active 扱い」で継続。
 - `collect_cleanup_targets()`

@@ -14,7 +14,7 @@
   root 側にある `note_worktree` の説明が runtime 側には存在しない（既存差分）。
 - `prompts/wakashu.md:57` と `.yamibaito/prompts/wakashu.md:53`-`.yamibaito/prompts/wakashu.md:60`  
   同様に worktree 注意事項の記載が runtime 側で欠落している。
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:82`-`/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:99`  
+- `.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:82`-`.yamibaito/queue_agile-improve/reports/worker_003_report.yaml:99`  
   既に「二重管理が高優先度課題」として報告済み。
 
 障害シナリオ:

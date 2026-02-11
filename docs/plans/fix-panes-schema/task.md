@@ -5,7 +5,7 @@
 該当箇所:
 
 - `scripts/yb_start.sh:255` と `scripts/yb_start.sh:257` が `worktree_root` / `worktree_branch` を `None` で書き出している。
-- `scripts/yb_restart.sh:55-60` は読み取り時に `isinstance(..., str)` 判定で `''` へ落とし、`scripts/yb_restart.sh:114` で branch 推定へフォールバックする。
+- `scripts/yb_restart.sh:55-60` は読み取り時に `isinstance(..., str)` 判定で `''` へ落とし、`scripts/yb_restart.sh:113-114` で branch 推定へフォールバックする。
 - `scripts/yb_stop.sh:62-66` も `worktree_branch` の型チェックに失敗すると `scripts/yb_stop.sh:72-89` の prefix 推定削除へフォールバックする。
 - `scripts/yb_worktree_list.sh:37` は `worktree_branch` が falsy だとセッション表示対象から除外され、`scripts/yb_worktree_list.sh:41` は `worktree_root` に空文字を入れている。
 

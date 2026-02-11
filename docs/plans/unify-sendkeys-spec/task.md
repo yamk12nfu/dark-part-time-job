@@ -5,17 +5,17 @@
 
 ## 2. 現状の問題
 該当コード（ファイル名・行番号）:
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/oyabun.md:45`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/oyabun.md:77`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/oyabun.md:131`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/oyabun.md:200`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/waka.md:62`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/waka.md:81`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/waka.md:105`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/prompts/waka.md:226`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/config.yaml:1`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job-worktrees/yamibaito-agile-improve/docs/improvement-report.md:218`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:37`
+- `.yamibaito/prompts/oyabun.md:45`
+- `.yamibaito/prompts/oyabun.md:77`
+- `.yamibaito/prompts/oyabun.md:131`
+- `.yamibaito/prompts/oyabun.md:200`
+- `.yamibaito/prompts/waka.md:62`
+- `.yamibaito/prompts/waka.md:81`
+- `.yamibaito/prompts/waka.md:105`
+- `.yamibaito/prompts/waka.md:226`
+- `.yamibaito/config.yaml:1`
+- `docs/improvement-report.md:218`
+- `.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:37`
 
 現状の挙動:
 - 親分プロンプトは `send_keys.method: two_bash_calls`、若頭プロンプトは `send_keys.method: two_calls` で同義ルールを別名管理している。

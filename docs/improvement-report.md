@@ -246,7 +246,7 @@ queue と report の寿命管理がなく、終了済み session のデータが
 
 ## 参照レポート
 
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_001_report.yaml`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_002_report.yaml`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_003_report.yaml`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_004_report.yaml`
+- `.yamibaito/queue_agile-improve/reports/worker_001_report.yaml`
+- `.yamibaito/queue_agile-improve/reports/worker_002_report.yaml`
+- `.yamibaito/queue_agile-improve/reports/worker_003_report.yaml`
+- `.yamibaito/queue_agile-improve/reports/worker_004_report.yaml`

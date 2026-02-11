@@ -36,6 +36,21 @@
   - `task.status in {"done", "completed"}`（少なくとも `pending` / `in_progress` は拒否）
   - `report.task_id == task.task_id`
   - `report.parent_cmd_id == task.parent_cmd_id`
+- `status` ごとのリセット挙動を明示し、`pending` / `in_progress` だけでなく全ステータスで fail-safe に統一する。
+  - report 側: `done` / `completed` のみ「リセット判定を試行」し、それ以外（`pending`, `assigned`, `in_progress`, `blocked`, `failed`, `idle`, 空値/未知値）は即スキップ。
+  - task 側:
+
+    | task.status | リセット挙動 |
+    |---|---|
+    | `pending` | 未着手として保持。リセットしない。 |
+    | `assigned` | 配布直後の互換ステータスとして保持。リセットしない。 |
+    | `in_progress` | 実行中として保持。リセットしない。 |
+    | `blocked` | 要対応状態として保持。リセットしない。 |
+    | `failed` | 失敗状態として保持。リセットしない。 |
+    | `done` | `task_id` / `parent_cmd_id` が report と一致した場合のみ `idle` へリセット。 |
+    | `completed` | `task_id` / `parent_cmd_id` が report と一致した場合のみ `idle` へリセット。 |
+    | `idle` | 既に待機状態のため no-op（再リセットしない）。 |
+    | 空値 / `null` / 未知値 | 異常入力としてスキップ（warning ログ）。 |
 - `completed_worker_ids` を直接集める現行方式（`scripts/yb_collect.sh:187-198`）は廃止し、`done` report ごとに上記判定を通した worker だけを `workers_to_reset` に積む。
 
 関数/構造の想定:

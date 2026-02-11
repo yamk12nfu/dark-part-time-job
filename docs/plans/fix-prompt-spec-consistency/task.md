@@ -14,7 +14,7 @@
   若衆は send-keys 禁止で、通知は `yb run-worker` が行うと定義。
 - `.yamibaito/prompts/oyabun.md:45`, `.yamibaito/prompts/oyabun.md:77` と `.yamibaito/prompts/waka.md:62`, `.yamibaito/prompts/waka.md:81`, `.yamibaito/prompts/waka.md:105`  
   send-keys 手順名が `two_bash_calls` と `two_calls` で揺れている。
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:15`-`/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:33`  
+- `.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:15`-`.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:33`  
   上記矛盾が高優先度課題として報告済み。
 
 障害シナリオ:
@@ -30,6 +30,7 @@
 - 通知仕様を一本化する（推奨: 若衆は send-keys 禁止、若頭通知は `yb run-worker` のみ）。
 - send-keys 手順名を単一語彙（例: `two_step_send_keys`）へ統一する。
 - 仕様必須項目（version/notification/send_keys）に欠損や矛盾があれば検知できる検証手順を定義する。
+- 検証スクリプト（または同等のチェックコマンド実装）は本対応の必須要件とし、マージ前に実行可能な状態にする。
 
 非ゴール（スコープ外）:
 
@@ -48,7 +49,7 @@
 - `waka.md` と `wakashu.md` の通知経路を同一ルールに合わせ、矛盾記述を削除する。
 - `oyabun.md`/`waka.md` の send-keys 記法を統一し、本文中の説明文・例も同じ語彙へ更新する。
 
-関数/構造体設計（検証スクリプトを導入する場合の想定）:
+関数/構造体設計（本対応で必須導入する検証手順の想定）:
 
 - `PromptSpec`（辞書/データクラス）  
   フィールド: `file`, `spec_version`, `prompt_version`, `send_keys_method`, `notification_mode`。
@@ -75,7 +76,7 @@
    変更ファイル: `.yamibaito/prompts/waka.md`, `.yamibaito/prompts/wakashu.md`
 4. send-keys メソッド名（`two_bash_calls` / `two_calls`）を統一し、本文の例示・説明も同期する。  
    変更ファイル: `.yamibaito/prompts/oyabun.md`, `.yamibaito/prompts/waka.md`
-5. front matter 検証手順（スクリプトまたはチェックコマンド）を追加し、以後の差分で再発しないようにする。  
+5. front matter 検証手順（スクリプト推奨、同等のチェックコマンドでも可）を必須で追加し、以後の差分で再発しないようにする。  
    変更ファイル: `scripts/`（必要時）
 
 ## 6. テスト方針

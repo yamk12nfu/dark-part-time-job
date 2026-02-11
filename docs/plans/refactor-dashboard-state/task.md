@@ -5,17 +5,17 @@
 
 ## 2. 現状の問題
 該当コード（ファイル名・行番号）:
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:89`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:98`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:129`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:165`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:205`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:219`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:227`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:262`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/scripts/yb_collect.sh:329`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job-worktrees/yamibaito-agile-improve/docs/improvement-report.md:230`
-- `/Users/makinokaedenari/yamk12nfu/dark-part-time-job/.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:61`
+- `scripts/yb_collect.sh:89`
+- `scripts/yb_collect.sh:98`
+- `scripts/yb_collect.sh:129`
+- `scripts/yb_collect.sh:165`
+- `scripts/yb_collect.sh:205`
+- `scripts/yb_collect.sh:219`
+- `scripts/yb_collect.sh:227`
+- `scripts/yb_collect.sh:262`
+- `scripts/yb_collect.sh:329`
+- `docs/improvement-report.md:230`
+- `.yamibaito/queue_agile-improve/reports/worker_004_report.yaml:61`
 
 現状の挙動:
 - `read_simple_kv()`（`yb_collect.sh:98`）で task/report を簡易パースし、表示用の配列をその場で作る。

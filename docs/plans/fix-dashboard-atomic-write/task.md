@@ -36,13 +36,13 @@
 排他は Bash、atomic write は Python ヘルパーで実装する。
 
 - 排他制御:
-`scripts/yb_collect.sh` の Python 実行前で `flock` を取得し、同一 queue に対する collect を直列化する。lock 対象は `"$queue_dir/.collect.lock"`。`--lock-timeout` を追加し、待機秒数を指定可能にする（既定 30 秒）。
+`scripts/yb_collect.sh` で `"$queue_dir/.collect.lock"` を使って `flock` を取得するが、ロックスコープは最小化する。集計・レンダリングは lock 外で実行し、`dashboard.md` / `_index.json` / task YAML の最終反映（atomic replace）だけを lock 内のクリティカルセクションに閉じ込める。`--lock-timeout` を追加し、待機秒数を指定可能にする（既定 30 秒）。
 
 - atomic write 関数:
 Python 側に `atomic_write_text(path, text)` と `atomic_write_json(path, payload)` を追加する。`tempfile.NamedTemporaryFile(dir=os.path.dirname(path), delete=False)` へ書き込み、`flush + fsync` 後に `os.replace` する。
 
 - 更新順序:
-`dashboard` と `_index.json` を atomic write 化し、task YAML リセットも同様の helper を使って部分書き込みを防ぐ。`all in lock` で読み取りから書き込みまでを一貫化する。
+`dashboard` と `_index.json` を atomic write 化し、task YAML リセットも同様の helper を使って部分書き込みを防ぐ。生成済みデータを lock 内で一括反映し、書き込み部分のみをクリティカルセクションにする。
 
 - エラー時挙動:
 lock timeout は非0終了（例: exit 2）し、競合中であることを明示する。atomic write 失敗時は元ファイルを保持したまま失敗終了し、`stderr` に対象パスと例外を出す。
@@ -54,7 +54,7 @@ lock timeout は非0終了（例: exit 2）し、競合中であることを明�
 
 ## 5. 実装ステップ
 1. `yb_collect.sh` に lock パラメータ（`--lock-timeout`）と lock ファイルパス決定処理を追加する。変更ファイル: `scripts/yb_collect.sh`
-2. Python 実行を `flock` 区間へ移動し、queue 単位で collect 全体を直列化する。変更ファイル: `scripts/yb_collect.sh`
+2. 収集・レンダリングを lock 外へ出し、`flock` 区間は最終書き込み処理だけに限定する。変更ファイル: `scripts/yb_collect.sh`
 3. Python 側へ `atomic_write_text` / `atomic_write_json` ヘルパーを追加する。変更ファイル: `scripts/yb_collect.sh`
 4. `dashboard.md` の直書き（`scripts/yb_collect.sh:262-263` 相当）を atomic write へ置換する。変更ファイル: `scripts/yb_collect.sh`
 5. `_index.json` と task YAML リセットの直書き（`scripts/yb_collect.sh:309-327` 相当）を atomic write へ置換する。変更ファイル: `scripts/yb_collect.sh`

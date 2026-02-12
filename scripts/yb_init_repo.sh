@@ -29,6 +29,13 @@ plan_dir="$config_dir/plan"
 
 mkdir -p "$tasks_dir" "$reports_dir" "$prompts_dir" "$skills_dir" "$plan_dir"
 
+# Plan テンプレート（3点セット）
+for tmpl in PRD.md SPEC.md tasks.yaml; do
+  if [ ! -f "$plan_dir/$tmpl" ]; then
+    cp "$ORCH_ROOT/templates/plan/$tmpl" "$plan_dir/$tmpl"
+  fi
+done
+
 if [ ! -f "$config_dir/config.yaml" ]; then
   cp "$ORCH_ROOT/templates/config.yaml" "$config_dir/config.yaml"
 fi

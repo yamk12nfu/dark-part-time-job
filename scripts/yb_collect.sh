@@ -201,11 +201,141 @@ for r in reports:
         skill_candidates.append(r)
 
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+plan_root = os.path.join(work_dir, ".yamibaito", "plan")
+latest_plan_dir = None
+if os.path.isdir(plan_root):
+    plan_dirs = sorted(
+        [d for d in os.listdir(plan_root) if os.path.isdir(os.path.join(plan_root, d))],
+        reverse=True,
+    )
+    if plan_dirs:
+        latest_plan_dir = os.path.join(plan_root, plan_dirs[0])
 
 lines = []
 lines.append("# 📊 組の進捗")
 lines.append(f"最終更新: {now}")
 lines.append("")
+if latest_plan_dir:
+    prd_path = os.path.join(latest_plan_dir, "PRD.md")
+    spec_path = os.path.join(latest_plan_dir, "SPEC.md")
+    tasks_yaml_path = os.path.join(latest_plan_dir, "tasks.yaml")
+    review_report_path = os.path.join(latest_plan_dir, "plan_review_report.md")
+
+    lines.append("## 📋 Plan Outputs")
+    lines.append(f"- 最新Plan: `{os.path.relpath(latest_plan_dir, work_dir)}`")
+    for label, path in (("PRD.md", prd_path), ("SPEC.md", spec_path), ("tasks.yaml", tasks_yaml_path)):
+        if os.path.exists(path):
+            rel_path = os.path.relpath(path, work_dir)
+            lines.append(f"- ✅ {label}: [{rel_path}]({rel_path})")
+        else:
+            lines.append(f"- ❌ {label}: なし")
+    lines.append("")
+
+    review_status = "未レビュー"
+    fail_reasons = []
+    if os.path.exists(review_report_path):
+        try:
+            with open(review_report_path, "r", encoding="utf-8") as f:
+                review_content = f.read()
+            if "Result: PASS" in review_content:
+                review_status = "Pass ✅"
+            elif "Result: FAIL" in review_content:
+                review_status = "Fail ❌"
+                in_reasons = False
+                for line in review_content.splitlines():
+                    stripped = line.strip()
+                    if "Fail reasons:" in stripped:
+                        in_reasons = True
+                        continue
+                    if in_reasons and stripped.startswith("- "):
+                        fail_reasons.append(stripped)
+                    elif in_reasons and stripped.startswith("## "):
+                        break
+        except OSError:
+            pass
+
+    lines.append("## 🏥 Plan Health")
+    lines.append(f"- レビュー結果: {review_status}")
+    if review_status == "Fail ❌":
+        if fail_reasons:
+            lines.extend(fail_reasons)
+        else:
+            lines.append("- Fail reasons: (抽出できませんでした)")
+    lines.append("")
+
+    questions = []
+    if os.path.exists(prd_path):
+        try:
+            with open(prd_path, "r", encoding="utf-8") as f:
+                prd_lines = f.readlines()
+            in_oq_section = False
+            for line in prd_lines:
+                stripped = line.strip()
+                if stripped.startswith("## Open Questions") or stripped.startswith("## 未決事項"):
+                    in_oq_section = True
+                    continue
+                if in_oq_section and stripped.startswith("## "):
+                    break
+                if in_oq_section and stripped.startswith("- "):
+                    questions.append(stripped)
+        except OSError:
+            pass
+
+    lines.append("## ❓ Open Questions")
+    lines.append(f"- {len(questions)}件の未決事項")
+    if questions:
+        lines.extend(questions)
+    else:
+        lines.append("- なし")
+    lines.append("")
+
+    lines.append("## 📊 Task Summary")
+    tasks_list = None
+    try:
+        import yaml
+
+        with open(tasks_yaml_path, "r", encoding="utf-8") as f:
+            task_data = yaml.safe_load(f) or {}
+        if isinstance(task_data, dict):
+            raw_tasks = task_data.get("tasks", [])
+            if isinstance(raw_tasks, list):
+                tasks_list = raw_tasks
+            else:
+                tasks_list = []
+        else:
+            tasks_list = []
+    except ImportError:
+        tasks_list = None
+    except Exception:
+        tasks_list = None
+
+    if tasks_list is None:
+        lines.append("- YAML parse 不可")
+    else:
+        lines.append(f"- 総タスク数: {len(tasks_list)}件")
+        owner_counts = {}
+        unassigned = 0
+        for task in tasks_list:
+            owner = ""
+            if isinstance(task, dict):
+                raw_owner = task.get("owner")
+                if raw_owner is None:
+                    raw_owner = task.get("assigned_to")
+                if raw_owner is not None:
+                    owner = str(raw_owner).strip()
+            if owner:
+                owner_counts[owner] = owner_counts.get(owner, 0) + 1
+            else:
+                unassigned += 1
+        if owner_counts:
+            for owner, count in sorted(owner_counts.items()):
+                lines.append(f"- owner `{owner}`: {count}件")
+        else:
+            lines.append("- owner別: なし")
+        if unassigned:
+            lines.append(f"- ⚠️ 未割当 {unassigned}件")
+    lines.append("")
+
 lines.append("## 🚨 親分の裁き待ち（判断が必要）")
 if attention:
     for r in attention:

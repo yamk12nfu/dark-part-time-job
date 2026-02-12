@@ -8,6 +8,7 @@
 - `claude` CLI（Claude Code）
 - `codex` CLI
 - `python3`
+- `python3 -m pip install pyyaml`（推奨。`yb plan-review` の静的バリデーションで使用。未インストール時は一部チェックがスキップされる）
 - `git`
 - `git-gtr`（[git-worktree-runner](https://github.com/coderabbitai/git-worktree-runner)）— worktree 連動に必要
 
@@ -69,8 +70,10 @@ tmux attach -t yamibaito_<repo>
   - `reports/worker_XXX_report.yaml`
   - `reports/_index.json`
 - `.yamibaito/queue_<id>/`（`yb start --session <id>` 時に作成）
-- `.yamibaito/prompts/`
-- `.yamibaito/plan/`（計画書の保存先）
+- `.yamibaito/prompts/`（`oyabun.md`、`waka.md`、`wakashu.md`、`plan.md`）
+- `.yamibaito/skills/`
+- `.yamibaito/plan/`（計画書の保存先。テンプレート `PRD.md`、`SPEC.md`、`tasks.yaml` を初期配置）
+- `.gitignore`（`.yamibaito/` と `dashboard.md` を自動追記）
 
 ## 設定
 
@@ -99,8 +102,8 @@ tmux attach -t yamibaito_<repo>
 | `yb worktree list` | セッションとworktreeの対応一覧を表示 |
 | `yb dispatch` | 若衆へ割当済みタスクを起動（手動用） |
 | `yb collect` | `dashboard.md` を再生成 |
-| `yb plan` | 計画作成セッションを新規起動 |
-| `yb plan-review` | 計画書のレビューを Codex で実行 |
+| `yb plan` | 計画作成セッション（PRD+SPEC+tasks.yaml 3点セット）を新規起動 |
+| `yb plan-review` | 静的バリデーション + Codex による計画書レビュー |
 | `yb run-worker` | 若衆（ワーカー）のタスクを実行（内部用） |
 
 ---
@@ -118,24 +121,28 @@ yb init --repo /path/to/repo   # 別リポジトリを対象
 
 1. `.yamibaito/` 配下にディレクトリ構造を作成
    - `queue/tasks/` / `queue/reports/` — タスク・レポート格納先
-   - `prompts/` — 親分・若頭・若衆のプロンプト
+   - `prompts/` — 親分・若頭・若衆・計画のプロンプト
    - `skills/` — スキル定義
+   - `plan/` — 計画書の保存先
 2. テンプレートから設定ファイルをコピー（既存ファイルはスキップ）
    - `config.yaml`、`director_to_planner.yaml`、`dashboard.md`
-3. オーケストレータからプロンプトファイルをコピー（常に最新版で上書き）
-   - `oyabun.md`、`waka.md`、`wakashu.md`
-4. `config.yaml` の `codex_count`（デフォルト 5）に応じてワーカーファイルを生成
+3. Plan テンプレートをコピー（既存ファイルはスキップ）
+   - `plan/PRD.md`、`plan/SPEC.md`、`plan/tasks.yaml`
+4. オーケストレータからプロンプトファイルをコピー（常に最新版で上書き）
+   - `oyabun.md`、`waka.md`、`wakashu.md`、`plan.md`
+5. `config.yaml` の `workers.codex_count`（未設定時は 3）に応じてワーカーファイルを生成
    - `tasks/worker_001.yaml` 〜 `tasks/worker_XXX.yaml`
    - `reports/worker_001_report.yaml` 〜 `reports/worker_XXX_report.yaml`
    - `reports/_index.json`
+6. `.gitignore` に `.yamibaito/` と `dashboard.md` を自動追記（既存エントリはスキップ）
 
-**注意:** 設定ファイル（`config.yaml`、`director_to_planner.yaml`、`dashboard.md` 等）やワーカーファイルは、既に存在する場合スキップされる。ただし **プロンプトファイル（`oyabun.md`、`waka.md`、`wakashu.md`）は毎回オーケストレータの最新版で上書きされる。**
+**注意:** 設定ファイル（`config.yaml`、`director_to_planner.yaml`、`dashboard.md` 等）、Plan テンプレート、ワーカーファイルは、既に存在する場合スキップされる。ただし **プロンプトファイル（`oyabun.md`、`waka.md`、`wakashu.md`、`plan.md`）は毎回オーケストレータの最新版で上書きされる。**
 
 ---
 
 ### `yb plan`
 
-計画作成セッションを新規起動し、`.yamibaito/plan/<name>/` に成果物を生成する。
+計画作成セッションを新規起動し、`.yamibaito/plan/<name>/` に PRD+SPEC+tasks.yaml の3点セットを生成する。
 `.yamibaito` が無い場合は自動で初期化される。
 
 ```bash
@@ -147,19 +154,52 @@ yb plan --repo /path/to/repo --title auth-session
 **実行されること:**
 
 1. `.yamibaito/plan/<name>/` を作成
-2. `plan.md` / `tasks.md` / `checklist.md` / `review_prompt.md` / `review_report.md` を生成
-3. 新規 tmux セッションで Claude Code を起動
+2. テンプレートから以下のファイルをコピー
+   - `PRD.md` — プロダクト要件（目的/背景、スコープ、FR、NFR、AC、Open Questions）
+   - `SPEC.md` — 実装設計（アーキテクチャ、インターフェース、タスク分解、テスト計画、ロールアウト/互換性、リスク）
+   - `tasks.yaml` — 機械可読なタスク定義（owner, depends_on, requirement_ids, deliverables, definition_of_done）
+   - `review_prompt.md` — Codex レビュー用プロンプト
+3. 新規 tmux セッションを作成（上: plan ペイン 80%、下: codex ペイン 20%）
+4. plan ペインで Claude Code を起動し、`plan.md` プロンプトを読み込ませる
+5. `.yamibaito/plan/<name>/panes.json` にペインマッピングを保存
 
 **運用ルール:**
 
-- Claude Code 内で `/plan-review` を入力すると `review_prompt.md` を使って Codex にレビューを投げる
+- Claude Code 内で `/plan-review` を入力したら、plan ペインの Claude が `yb plan-review` を実行する（静的バリデーション → Codex レビュー）
 - 不明点や曖昧な点は推測せず、必ず質問する
-- `/plan-review` は `yb plan-review` で Codex ペインに送る（plan セッション内で実行）
+- 計画の完了条件: PRD.md + SPEC.md + tasks.yaml の3点が全て埋まり、`/plan-review` で Pass していること
 
 **命名規則:**
 
 - `YYYY-MM-DD--<short-title>`
 - `<short-title>` は 2〜4語の英単語・小文字・`-` 区切り
+- 同名ディレクトリが既に存在する場合は `-1`、`-2` ... のサフィックスが付与される
+
+---
+
+### `yb plan-review`
+
+計画書の静的バリデーションと Codex による LLM レビューを実行する。
+
+```bash
+yb plan-review --repo /path/to/repo --plan-dir /path/to/plan
+```
+
+通常は `yb plan` セッション内から `/plan-review` で呼び出す。環境変数 `YB_PLAN_REPO` / `YB_PLAN_DIR` が設定されていれば `--repo` / `--plan-dir` は省略可能。
+
+**実行されること:**
+
+1. **静的バリデーション**（`yb_plan_validate.py`）を実行
+   - PRD.md: 必須セクション（目的/背景、スコープ、FR、NFR、AC、Open Questions）の存在と本文確認
+   - PRD.md: スコープ配下の `In scope` / `Out of scope` サブセクション確認
+   - SPEC.md: 必須セクション（アーキテクチャ、インターフェース、タスク分解、テスト、ロールアウト、リスク）の存在と本文確認
+   - tasks.yaml: YAML パース、ルート必須キー（`version`、`epic`、`objective`、`requirements`、`tasks`）の存在確認
+   - tasks.yaml: requirement 必須フィールド（`id`、`title`、`acceptance`）と task 必須フィールド（`id`、`owner`、`depends_on`、`requirement_ids`、`deliverables`、`definition_of_done`）の確認
+   - tasks.yaml: 依存関係の DAG 検証（循環検出、重複ID検出）
+   - tasks.yaml: 未知の依存先（`depends_on` の未定義 ID）を WARN として検出
+2. 静的バリデーションが FAIL の場合、`plan_review_report.md` にエラーを書き出して終了（LLM レビューはスキップ）
+3. 静的バリデーションが PASS の場合、`review_prompt.md` をもとに `review_prompt_runtime.md` を生成し、レビュー対象ファイルの絶対パスを付加して Codex ペインで LLM レビューを実行
+4. 結果を `plan_review_report.md` に追記（`review_prompt.md` 本体は変更しない）
 
 ---
 

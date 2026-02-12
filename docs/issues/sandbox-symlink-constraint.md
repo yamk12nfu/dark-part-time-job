@@ -5,7 +5,7 @@
 worktree 環境で `.yamibaito/` がメインリポジトリへのシンボリックリンクになっている場合、
 Codex（若衆）の sandbox が symlink 先への書き込みを拒否する。
 
-```
+```text
 worktree/.yamibaito → /path/to/main-repo/.yamibaito (symlink)
 ```
 

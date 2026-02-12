@@ -146,7 +146,7 @@ def validate_prd(prd_file: Path) -> Tuple[bool, str]:
         if not any(section_has_content(section) for section in matched_sections):
             empty_sections.append(label)
 
-    scope_sections = find_sections(sections, ["スコープ"])
+    scope_sections = find_sections(sections, ["スコープ", "scope"])
     missing_scope_subsections: List[str] = []
     if scope_sections:
         subheadings: List[str] = []
@@ -189,12 +189,23 @@ def validate_spec(spec_file: Path) -> Tuple[bool, str]:
     ]
 
     missing_sections: List[str] = []
+    empty_sections: List[str] = []
     for label, aliases in required:
-        if not find_sections(sections, aliases):
+        matched_sections = find_sections(sections, aliases)
+        if not matched_sections:
             missing_sections.append(label)
+            continue
+        if not any(section_has_content(section) for section in matched_sections):
+            empty_sections.append(label)
 
+    details: List[str] = []
     if missing_sections:
-        return False, "SPEC.md: 必須セクション欠落: " + ", ".join(missing_sections)
+        details.append("必須セクション欠落: " + ", ".join(missing_sections))
+    if empty_sections:
+        details.append("本文不足: " + ", ".join(empty_sections))
+
+    if details:
+        return False, "SPEC.md: " + " / ".join(details)
 
     return True, "SPEC.md: 必須セクション OK"
 

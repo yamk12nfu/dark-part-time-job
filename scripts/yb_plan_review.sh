@@ -65,7 +65,11 @@ if [ $validate_exit -ne 0 ]; then
   cat > "$review_report" <<EOF
 # Plan Review Report
 
-## Static Validation: FAIL
+## Static Validation
+
+Result: FAIL
+
+Fail reasons:
 
 $validate_output
 
@@ -79,7 +83,9 @@ fi
 cat > "$review_report" <<EOF
 # Plan Review Report
 
-## Static Validation: PASS
+## Static Validation
+
+Result: PASS
 
 $validate_output
 

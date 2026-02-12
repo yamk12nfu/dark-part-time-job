@@ -60,11 +60,11 @@ done
 mkdir -p "$plan_dir"
 
 template_dir="$ORCH_ROOT/templates/plan"
-cp "$template_dir/plan.md" "$plan_dir/plan.md"
-cp "$template_dir/tasks.md" "$plan_dir/tasks.md"
-cp "$template_dir/checklist.md" "$plan_dir/checklist.md"
+# 3点セット（新方式）
+cp "$template_dir/PRD.md" "$plan_dir/PRD.md"
+cp "$template_dir/SPEC.md" "$plan_dir/SPEC.md"
+cp "$template_dir/tasks.yaml" "$plan_dir/tasks.yaml"
 cp "$template_dir/review_prompt.md" "$plan_dir/review_prompt.md"
-cp "$template_dir/review_report.md" "$plan_dir/review_report.md"
 
 session_name="yamibaito_plan_${repo_name}_${slug}"
 if tmux has-session -t "$session_name" 2>/dev/null; then
@@ -86,12 +86,20 @@ EOF
 tmux send-keys -t "$session_name":0.0 "export PATH=\"$ORCH_ROOT/bin:\$PATH\" YB_PLAN_REPO=\"$repo_root\" YB_PLAN_DIR=\"$plan_dir\" && cd \"$repo_root\" && clear" C-m
 tmux send-keys -t "$session_name":0.1 "export PATH=\"$ORCH_ROOT/bin:\$PATH\" YB_PLAN_REPO=\"$repo_root\" YB_PLAN_DIR=\"$plan_dir\" && cd \"$repo_root\" && clear" C-m
 tmux send-keys -t "$session_name":0.0 "claude --dangerously-skip-permissions" C-m
-tmux send-keys -t "$session_name":0.1 "echo \"Run: yb plan-review\" && echo \"(writes: $plan_dir/review_report.md)\"" C-m
+tmux send-keys -t "$session_name":0.1 "echo \"Run: yb plan-review\" && echo \"(writes: $plan_dir/plan_review_report.md)\"" C-m
 sleep 2
-plan_prompt="$repo_root/.yamibaito/prompts/plan.md"
+# Ensure latest plan prompt is available
+plan_prompt_src="$ORCH_ROOT/prompts/plan.md"
+plan_prompt_dst="$repo_root/.yamibaito/prompts/plan.md"
+if [ -f "$plan_prompt_src" ]; then
+  mkdir -p "$(dirname "$plan_prompt_dst")"
+  cp "$plan_prompt_src" "$plan_prompt_dst"
+fi
+
+plan_prompt="$plan_prompt_dst"
 tmux send-keys -t "$session_name":0.0 "Please read file: \"$plan_prompt\" and follow it. You are the planner." C-m
 sleep 2
-tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use plan.md for the main plan, tasks.md for task breakdown, checklist.md for review checklist, review_prompt.md for Codex review, review_report.md for Codex output. When the user types \"/plan-review\", run: yb plan-review. The codex pane shows the command to run." C-m
+tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for Codex review, plan_review_report.md is for Codex review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"/plan-review\", run: yb plan-review." C-m
 
 echo "yb plan: plan dir created at $plan_dir"
 echo "yb plan: tmux session created: $session_name"

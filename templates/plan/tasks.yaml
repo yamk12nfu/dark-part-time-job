@@ -1,0 +1,17 @@
+version: 1
+epic: EP-001
+objective: ""
+
+requirements:
+  - id: FR-1
+    title: ""
+    acceptance:
+      - ""
+
+tasks:
+  - id: T-001
+    owner: worker_001
+    depends_on: []
+    requirement_ids: [FR-1]
+    deliverables: ["", ""]
+    definition_of_done: ["", ""]

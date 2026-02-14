@@ -1,7 +1,7 @@
-# 16計画 進捗チェックリスト
+# 15計画 進捗チェックリスト
 
 - 最終更新日時: 2026-02-15（手動更新の運用を想定）
-- 全体進捗サマリ: 完了 0/16、進行中 0/16、未着手 16/16
+- 全体進捗サマリ: 完了 0/15、進行中 0/15、未着手 15/15
 - 参照: [依存関係マップ](dependency-map.md)
 
 ## Phase 1: 基盤修正
@@ -73,9 +73,5 @@
   - 状態: 未着手
 - [ ] **[add-skill-mvp](add-skill-mvp/)** — skill テンプレート・index・`yb skill` CLI を実装し、collect の候補検出と登録フローを接続する。
   - 対象: `bin/yb`, `scripts/yb_skill.sh`（新規）, `scripts/yb_collect.sh`, `.yamibaito/templates/skill/SKILL.md.tmpl`（新規）, `.yamibaito/skills/index.yaml`（新規）
-  - 依存: Phase 2 完了（`fix-prompt-spec-consistency`, `fix-collect-reset-guard`, `refactor-dashboard-state`, `add-version-management`, `fix-restart-grep-shim`）
-  - 状態: 未着手
-- [ ] **[improve-plan-mode](improve-plan-mode/)** — `yb plan`/`yb collect`/dashboard 改善を対象とする計画（計画未策定）。
-  - 対象: `scripts/yb_plan.sh`, `scripts/yb_collect.sh`, `dashboard`
   - 依存: Phase 2 完了（`fix-prompt-spec-consistency`, `fix-collect-reset-guard`, `refactor-dashboard-state`, `add-version-management`, `fix-restart-grep-shim`）
   - 状態: 未着手

@@ -29,21 +29,20 @@ if [ -n "$session_id" ]; then
   session_suffix="_${session_id}"
 fi
 panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
-queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
 
 if [ ! -f "$panes_file" ]; then
   echo "Missing panes map (run yb start): $panes_file" >&2
   exit 1
 fi
 
-REPO_ROOT="$repo_root" PANES_FILE="$panes_file" QUEUE_DIR="$queue_dir" ORCH_ROOT="$ORCH_ROOT" SESSION_ID="$session_id" python3 - <<'PY'
+REPO_ROOT="$repo_root" PANES_FILE="$panes_file" ORCH_ROOT="$ORCH_ROOT" SESSION_ID="$session_id" python3 - <<'PY'
 import json, os, subprocess, sys
 
 repo_root = os.environ["REPO_ROOT"]
 panes_file = os.environ["PANES_FILE"]
 orch_root = os.environ["ORCH_ROOT"]
-queue_dir = os.environ["QUEUE_DIR"]
 session_id = os.environ.get("SESSION_ID", "")
+session_suffix = f"_{session_id}" if session_id else ""
 
 try:
     with open(panes_file, "r", encoding="utf-8") as f:
@@ -63,6 +62,11 @@ except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
 work_dir = panes_data.get("work_dir", repo_root)
 if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
+
+# Build queue_dir from work_dir first, then fall back to repo_root for compatibility.
+queue_dir = os.path.join(work_dir, ".yamibaito", f"queue{session_suffix}")
+if not os.path.isdir(queue_dir):
+    queue_dir = os.path.join(repo_root, ".yamibaito", f"queue{session_suffix}")
 
 def read_task_status(task_path):
     if not os.path.exists(task_path):

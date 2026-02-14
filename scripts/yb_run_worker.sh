@@ -37,7 +37,34 @@ session_suffix=""
 if [ -n "$session_id" ]; then
   session_suffix="_${session_id}"
 fi
-queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
+# queue_dir を work_dir ベースで構築（フォールバック: repo_root）
+_panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
+_work_dir="$repo_root"
+if [ -f "$_panes_file" ]; then
+  _resolved="$(_PANES_FILE="$_panes_file" _REPO_ROOT="$repo_root" python3 - <<'PY'
+import json, os
+
+panes_file = os.environ["_PANES_FILE"]
+repo_root = os.environ["_REPO_ROOT"]
+
+try:
+    with open(panes_file, "r") as f:
+        d = json.load(f)
+    wd = d.get("work_dir", "")
+    if wd and os.path.isdir(wd):
+        print(wd)
+    else:
+        print(repo_root)
+except Exception:
+    print(repo_root)
+PY
+)"
+  _work_dir="$_resolved"
+fi
+queue_dir="$_work_dir/.yamibaito/queue${session_suffix}"
+if [ ! -d "$queue_dir" ]; then
+  queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
+fi
 task_file="$queue_dir/tasks/${worker_id}.yaml"
 
 if [ ! -f "$task_file" ]; then

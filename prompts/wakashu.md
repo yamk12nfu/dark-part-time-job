@@ -243,8 +243,9 @@ worktree セッションで起動された場合、以下の点に注意せよ�
 - worktree は元リポとは別ブランチで動作している
 
 ### .yamibaito/ について
-- `.yamibaito/` ディレクトリは元リポ（`$YB_REPO_ROOT`）にある
-- worktree 内には `.yamibaito/` は存在しない（`.gitignore` で除外済み）
+- `.yamibaito/` は worktree 内に **実ディレクトリ** として存在する（`.gitignore` で除外済み）
+- `config.yaml`, `prompts/`, `skills/`, `plan/` は元リポ（`$YB_REPO_ROOT`）への **個別 symlink**
+- `queue_xxx/` は worktree 内の **実ディレクトリ**（sandbox 書き込み可能）
 - task ファイルや report ファイルのパスは `$YB_QUEUE_DIR` 環境変数で指定されている
 
 ### git 操作について

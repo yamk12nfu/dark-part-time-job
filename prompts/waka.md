@@ -240,8 +240,8 @@ fi
 ### 若頭が意識すべきこと
 
 - **作業ディレクトリ**: 若衆の codex は `$YB_WORK_DIR`（worktree）内で動作する
-- **オーケストレータ設定**: `.yamibaito/` は元リポ（`$YB_REPO_ROOT`）にある。worktree には存在しない
-- **queue/task/report**: 元リポの `.yamibaito/queue_<id>/` を参照する（従来通り）
+- **オーケストレータ設定**: `.yamibaito/` は worktree 内に実ディレクトリとして存在する。設定ファイル（config.yaml, prompts/, skills/, plan/）は元リポ（`$YB_REPO_ROOT`）への個別 symlink
+- **queue/task/report**: worktree 内の `.yamibaito/queue_<id>/` を参照する（実ディレクトリ、sandbox 書き込み可能）
 - **dashboard.md**: `$YB_WORK_DIR/dashboard.md` に書かれる（worktree で自然分離）
 - **git 操作**: worktree 内では worktree のブランチ（`$YB_WORKTREE_BRANCH`）で動作する
 

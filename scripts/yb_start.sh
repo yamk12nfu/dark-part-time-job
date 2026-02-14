@@ -99,19 +99,33 @@ if [ -n "$session_id" ] && [ "$no_worktree" = "false" ] && [ "$wt_enabled" = "tr
 fi
 
 if [ -n "$worktree_root" ]; then
-  if [ -L "$worktree_root/.yamibaito" ]; then
-    if [ ! -e "$worktree_root/.yamibaito" ]; then
-      rm "$worktree_root/.yamibaito"
-      ln -s "$repo_root/.yamibaito" "$worktree_root/.yamibaito"
-      echo "Linked .yamibaito/ -> $repo_root/.yamibaito"
-    fi
-  elif [ ! -e "$worktree_root/.yamibaito" ]; then
-    ln -s "$repo_root/.yamibaito" "$worktree_root/.yamibaito"
-    echo "Linked .yamibaito/ -> $repo_root/.yamibaito"
+  yamibaito_dir="$worktree_root/.yamibaito"
+
+  # 旧方式の丸ごと symlink が残っていれば削除
+  if [ -L "$yamibaito_dir" ]; then
+    rm "$yamibaito_dir"
+    echo "Removed legacy .yamibaito symlink"
   fi
+
+  # 実ディレクトリを作成
+  mkdir -p "$yamibaito_dir"
+
+  # 個別 symlink を作成（config.yaml, prompts/, skills/, plan/）
+  for item in config.yaml prompts skills plan; do
+    target="$repo_root/.yamibaito/$item"
+    link="$yamibaito_dir/$item"
+    # 壊れた symlink が残っていれば除去
+    if [ -L "$link" ] && [ ! -e "$link" ]; then
+      rm "$link"
+    fi
+    if [ -e "$target" ] && [ ! -e "$link" ]; then
+      ln -s "$target" "$link"
+      echo "Linked .yamibaito/$item -> $target"
+    fi
+  done
 fi
 
-queue_dir="$repo_root/.yamibaito/queue${session_suffix}"
+queue_dir="$work_dir/.yamibaito/queue${session_suffix}"
 tasks_dir="$queue_dir/tasks"
 reports_dir="$queue_dir/reports"
 if [ -n "$session_id" ]; then
@@ -191,7 +205,7 @@ fi
 
 pane_map="$repo_root/.yamibaito/panes${session_suffix}.json"
 
-SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" WORKTREE_ROOT="$worktree_root" WORK_DIR="$work_dir" WORKTREE_BRANCH="$worktree_branch" python3 - <<'PY'
+SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" WORKTREE_ROOT="$worktree_root" WORK_DIR="$work_dir" WORKTREE_BRANCH="$worktree_branch" QUEUE_DIR="$queue_dir" python3 - <<'PY'
 import json
 import os
 import subprocess
@@ -201,6 +215,7 @@ repo_root = os.environ["REPO_ROOT"]
 worktree_root = os.environ.get("WORKTREE_ROOT", "")
 work_dir_val = os.environ.get("WORK_DIR", repo_root)
 worktree_branch = os.environ.get("WORKTREE_BRANCH", "")
+queue_dir_val = os.environ.get("QUEUE_DIR", "")
 worker_count = int(os.environ["WORKER_COUNT"])
 pane_map = os.environ["PANE_MAP"]
 worker_names = [
@@ -255,6 +270,7 @@ mapping = {
     "worktree_root": worktree_root if worktree_root else None,
     "work_dir": work_dir_val,
     "worktree_branch": worktree_branch if worktree_branch else None,
+    "queue_dir": queue_dir_val if queue_dir_val else None,
     "oyabun": f"0.{oyabun}",
     "waka": f"0.{waka}",
     "workers": workers,
@@ -277,6 +293,19 @@ for name, pane in workers.items():
     label = worker_names[idx] if 0 <= idx < len(worker_names) else name
     subprocess.run(["tmux", "select-pane", "-t", f"{session}:{pane}", "-T", label], check=False)
 PY
+
+# panes.json を worktree にも symlink（若衆が参照できるように）
+if [ -n "$worktree_root" ]; then
+  panes_link="$worktree_root/.yamibaito/panes${session_suffix}.json"
+  # 壊れた symlink が残っていれば除去
+  if [ -L "$panes_link" ] && [ ! -e "$panes_link" ]; then
+    rm "$panes_link"
+  fi
+  if [ ! -e "$panes_link" ]; then
+    ln -s "$pane_map" "$panes_link"
+    echo "Linked panes${session_suffix}.json -> $pane_map"
+  fi
+fi
 
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
   tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && export YB_SESSION_ID=\"$session_id\" && export YB_PANES_PATH=\"$pane_map\" && export YB_QUEUE_DIR=\"$queue_dir\" && export YB_WORK_DIR=\"$work_dir\" && export YB_WORKTREE_BRANCH=\"$worktree_branch\" && export YB_REPO_ROOT=\"$repo_root\" && cd \"$work_dir\" && clear" C-m

@@ -61,14 +61,9 @@ import os, json, datetime, subprocess, sys
 repo_root = os.environ["REPO_ROOT"]
 session_suffix = os.environ.get("SESSION_SUFFIX", "")
 config_file = os.path.join(repo_root, ".yamibaito/config.yaml")
-queue_dir = os.path.join(repo_root, f".yamibaito/queue{session_suffix}")
-tasks_dir = os.path.join(queue_dir, "tasks")
-reports_dir = os.path.join(queue_dir, "reports")
-index_file = os.path.join(reports_dir, "_index.json")
 panes_file = os.path.join(repo_root, f".yamibaito/panes{session_suffix}.json")
-queue_rel = os.path.relpath(queue_dir, repo_root)
 
-# 若衆の名前マッピングを読み込む（worker_001 -> "銀次" など）
+# 若衆の名前マッピングを読み込む（queue_dir 構築前に work_dir が必要）
 worker_names = {}
 panes_data = {}
 if os.path.exists(panes_file):
@@ -86,6 +81,21 @@ if os.path.exists(panes_file):
 work_dir = panes_data.get("work_dir", repo_root) if panes_data else repo_root
 if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
+
+# queue_dir を work_dir ベースで構築（フォールバック: repo_root）
+queue_dir = os.path.join(work_dir, ".yamibaito", f"queue{session_suffix}")
+if not os.path.isdir(queue_dir):
+    queue_dir = os.path.join(repo_root, ".yamibaito", f"queue{session_suffix}")
+if not os.path.isdir(queue_dir):
+    print(f"warning: queue dir not found: {queue_dir}", file=sys.stderr)
+    sys.exit(0)  # 正常終了（queue 未作成はエラーではない）
+tasks_dir = os.path.join(queue_dir, "tasks")
+reports_dir = os.path.join(queue_dir, "reports")
+index_file = os.path.join(reports_dir, "_index.json")
+
+# queue_rel を work_dir 相対に変更（タスクプロンプトの相対パス用）
+queue_rel = os.path.relpath(queue_dir, work_dir)
+
 dashboard_file = os.path.join(work_dir, "dashboard.md")
 
 def get_worker_display_name(worker_id):

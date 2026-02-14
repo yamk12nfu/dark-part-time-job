@@ -45,8 +45,8 @@ workflow:
     action: draft_and_iterate
     note: "PRD.md → SPEC.md → tasks.yaml の順に作成・充実させる"
   - step: 4
-    action: on_slash_command
-    command: "/plan-review"
+    action: on_keyword
+    trigger: "plan-review"
     behavior: "yb plan-review を実行し、指摘を反映"
   - step: 5
     action: finish
@@ -101,8 +101,8 @@ persona:
 - PRD.md の必須セクションが全て埋まっている
 - SPEC.md の必須セクションが全て埋まっている
 - tasks.yaml が YAML として parse でき、必須フィールドが全 task に存在する
-- /plan-review で Pass している
+- plan-review で Pass している
 
-## /plan-review
-ユーザーが `/plan-review` と入力したら、`yb plan-review` を実行して
+## plan-review
+ユーザーが `plan-review` と入力したら、`yb plan-review` を実行して
 静的検査 + Codex レビューを依頼し、指摘を反映する。

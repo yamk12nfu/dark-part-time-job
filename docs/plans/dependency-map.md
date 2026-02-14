@@ -4,8 +4,8 @@
 
 ## 凡例
 
-- `→` : 論理依存（左が先に完了すべき）
-- `⚠ FILE` : 同一ファイルを変更するため同時実装不可（RACE-001）
+- `→` : 論理依存（左の成果物を前提とするため、左が先に完了すべき）
+- `→ (⚠ FILE)` : ファイル競合制約（論理依存はないが、同一ファイルを変更するため順次実装が必要 / RACE-001）
 - `✅ 並列可` : 依存もファイル競合もなく同時実装可能
 
 ---
@@ -14,7 +14,7 @@
 
 ### Chain A: プロンプト正規化
 
-```
+```text
 fix-prompts-single-source
   → fix-prompt-spec-consistency
     → unify-sendkeys-spec
@@ -26,7 +26,7 @@ fix-prompts-single-source
 
 ### Chain B: Dashboard 信頼性
 
-```
+```text
 fix-dashboard-atomic-write
   → refactor-dashboard-state
 ```
@@ -36,9 +36,10 @@ fix-dashboard-atomic-write
 
 ### Chain C: Panes スキーマ
 
-```
+```text
 fix-panes-schema
   → add-version-management
+  → fix-restart-grep-shim  (⚠ FILE: restart.sh 競合による実装順序制約)
 ```
 
 - fix-panes-schema が panes.json を schema_version: 2 に移行
@@ -95,6 +96,7 @@ fix-panes-schema
 | 計画 | 変更内容 |
 |------|----------|
 | add-worker-runtime-adapter | runtime 設定追加 |
+| externalize-worker-names | display_names 設定追加 |
 | unify-sendkeys-spec | send-keys protocol 追加 |
 
 ### `.yamibaito/prompts/*`
@@ -141,10 +143,10 @@ fix-panes-schema
 | グループ | 計画 | 先行依存 | 主な変更対象 |
 |----------|------|----------|-------------|
 | **P2-A** | fix-prompt-spec-consistency | ← fix-prompts-single-source | prompts/* |
-| **P2-B** | fix-collect-reset-guard | ← fix-dashboard-atomic-write ※推奨 | collect |
+| **P2-B** | fix-collect-reset-guard | ← fix-dashboard-atomic-write (⚠ FILE: collect.sh 競合) | collect |
 | **P2-C** | refactor-dashboard-state | ← fix-dashboard-atomic-write | collect |
 | **P2-D** | add-version-management | ← fix-panes-schema | VERSION(新), bin/yb, start, plan, init_repo |
-| **P2-E** | fix-restart-grep-shim | ← fix-panes-schema ※restart.sh 競合 | restart, start |
+| **P2-E** | fix-restart-grep-shim | ← fix-panes-schema (⚠ FILE: restart.sh 競合) | restart, start |
 
 > **最大並列**: P2-A + P2-B + P2-D（ファイル競合なし）。次に P2-C + P2-E。
 
@@ -173,7 +175,7 @@ fix-panes-schema
 
 ## 4. 依存グラフ
 
-```
+```text
 Phase 1                   Phase 2                    Phase 3                 Phase 4
 ──────────────────────────────────────────────────────────────────────────────────────
 

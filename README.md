@@ -165,9 +165,9 @@ yb plan --repo /path/to/repo --title auth-session
 
 **運用ルール:**
 
-- Claude Code 内で `/plan-review` を入力したら、plan ペインの Claude が `yb plan-review` を実行する（静的バリデーション → Codex レビュー）
+- Claude Code 内で `plan-review` を入力したら、plan ペインの Claude が `yb plan-review` を実行する（静的バリデーション → Codex レビュー）
 - 不明点や曖昧な点は推測せず、必ず質問する
-- 計画の完了条件: PRD.md + SPEC.md + tasks.yaml の3点が全て埋まり、`/plan-review` で Pass していること
+- 計画の完了条件: PRD.md + SPEC.md + tasks.yaml の3点が全て埋まり、`plan-review` で Pass していること
 
 **命名規則:**
 
@@ -185,7 +185,7 @@ yb plan --repo /path/to/repo --title auth-session
 yb plan-review --repo /path/to/repo --plan-dir /path/to/plan
 ```
 
-通常は `yb plan` セッション内から `/plan-review` で呼び出す。環境変数 `YB_PLAN_REPO` / `YB_PLAN_DIR` が設定されていれば `--repo` / `--plan-dir` は省略可能。
+通常は `yb plan` セッション内から `plan-review` で呼び出す。環境変数 `YB_PLAN_REPO` / `YB_PLAN_DIR` が設定されていれば `--repo` / `--plan-dir` は省略可能。
 
 **実行されること:**
 

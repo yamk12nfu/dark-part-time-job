@@ -39,7 +39,7 @@ fix-dashboard-atomic-write
 ```text
 fix-panes-schema
   → add-version-management
-  → fix-restart-grep-shim  (⚠ FILE: restart.sh 競合による実装順序制約)
+  → fix-restart-grep-shim  (⚠ FILE: scripts/yb_restart.sh 競合による実装順序制約)
 ```
 
 - fix-panes-schema が panes.json を schema_version: 2 に移行
@@ -146,7 +146,7 @@ fix-panes-schema
 | **P2-B** | fix-collect-reset-guard | ← fix-dashboard-atomic-write (⚠ FILE: collect.sh 競合) | collect |
 | **P2-C** | refactor-dashboard-state | ← fix-dashboard-atomic-write | collect |
 | **P2-D** | add-version-management | ← fix-panes-schema | VERSION(新), bin/yb, start, plan, init_repo |
-| **P2-E** | fix-restart-grep-shim | ← fix-panes-schema (⚠ FILE: restart.sh 競合) | restart, start |
+| **P2-E** | fix-restart-grep-shim | ← fix-panes-schema (⚠ FILE: scripts/yb_restart.sh 競合) | restart, start |
 
 > **最大並列**: P2-A + P2-B + P2-D（ファイル競合なし）。次に P2-C + P2-E。
 
@@ -179,19 +179,19 @@ fix-panes-schema
 Phase 1                   Phase 2                    Phase 3                 Phase 4
 ──────────────────────────────────────────────────────────────────────────────────────
 
-[prompts-single-source]─→ [prompt-spec-consistency]─→ [unify-sendkeys-spec]
+[fix-prompts-single-source] ─→ [fix-prompt-spec-consistency] ─→ [unify-sendkeys-spec]
 
-[panes-schema] ─────────→ [version-management]
-                     └──→ [restart-grep-shim]
+[fix-panes-schema] ─────────→ [add-version-management]
+                         └──→ [fix-restart-grep-shim]
 
-[atomic-write] ─────────→ [dashboard-state]                                [logging]
-                     └──→ [collect-reset-guard]                            [skill-mvp]
-                                                                           [plan-mode]
-[startup-readiness]
+[fix-dashboard-atomic-write] ─→ [refactor-dashboard-state]                 [add-structured-logging]
+                          └──→ [fix-collect-reset-guard]                   [add-skill-mvp]
+                                                                           [improve-plan-mode]
+[fix-startup-readiness]
 
-                          [cleanup-command] ──────→ (独立)
-                          [ext-worker-names] ─────→ (独立)
-                          [worker-runtime-adapter]→ (独立)
+                               [add-cleanup-command] ──────→ (独立)
+                               [externalize-worker-names] ─→ (独立)
+                               [add-worker-runtime-adapter]→ (独立)
 ```
 
 ---

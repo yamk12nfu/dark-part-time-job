@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="."
 session_id=""
+lock_timeout="30"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -11,6 +12,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --session)
       session_id="$2"
+      shift 2
+      ;;
+    --lock-timeout)
+      lock_timeout="$2"
+      if ! [[ "$lock_timeout" =~ ^[0-9]+$ ]]; then
+        echo "error: --lock-timeout must be a non-negative integer (got '$lock_timeout')" >&2
+        exit 1
+      fi
       shift 2
       ;;
     *)
@@ -55,8 +64,8 @@ PY
   fi
 fi
 
-REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" python3 - <<'PY'
-import os, json, datetime, subprocess, sys
+REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" python3 - <<'PY'
+import atexit, datetime, errno, fcntl, json, os, signal, subprocess, sys, tempfile
 
 repo_root = os.environ["REPO_ROOT"]
 session_suffix = os.environ.get("SESSION_SUFFIX", "")
@@ -89,9 +98,59 @@ if not os.path.isdir(queue_dir):
 if not os.path.isdir(queue_dir):
     print(f"warning: queue dir not found: {queue_dir}", file=sys.stderr)
     sys.exit(0)  # 正常終了（queue 未作成はエラーではない）
+
+# --- 排他制御 (fcntl.flock) ---
+lock_timeout = int(os.environ.get("LOCK_TIMEOUT", "30"))
+if lock_timeout < 0:
+    print(f"error: --lock-timeout must be >= 0 (got {lock_timeout})", file=sys.stderr)
+    sys.exit(1)
+lock_file_path = os.path.join(queue_dir, ".collect.lock")
+lock_fd = None
+try:
+    lock_fd = open(lock_file_path, "w")
+    if lock_timeout > 0:
+        timed_out = [False]
+        def _alarm_handler(signum, frame):
+            timed_out[0] = True
+            raise OSError(errno.EAGAIN, "lock timeout")
+        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.alarm(lock_timeout)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        except OSError as e:
+            if timed_out[0] or e.errno == errno.EAGAIN:
+                print(f"error: collect lock acquisition timed out ({lock_timeout}s). Another collect may be running.", file=sys.stderr)
+                sys.exit(2)
+            raise
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    elif lock_timeout == 0:
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as e:
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                print("error: collect lock is held by another process (non-blocking mode, --lock-timeout 0).", file=sys.stderr)
+                sys.exit(2)
+            raise
+except SystemExit:
+    raise
+except Exception as e:
+    print(f"error: failed to acquire collect lock: {e}", file=sys.stderr)
+    sys.exit(2)
+
+atexit.register(lock_fd.close)
 tasks_dir = os.path.join(queue_dir, "tasks")
 reports_dir = os.path.join(queue_dir, "reports")
 index_file = os.path.join(reports_dir, "_index.json")
+try:
+    os.makedirs(reports_dir, exist_ok=True)
+except OSError as e:
+    print(f"error: cannot create/access reports dir {reports_dir}: {e}", file=sys.stderr)
+    sys.exit(1)
+if not os.access(reports_dir, os.W_OK):
+    print(f"error: reports dir is not writable: {reports_dir}", file=sys.stderr)
+    sys.exit(1)
 
 # queue_rel を work_dir 相対に変更（タスクプロンプトの相対パス用）
 queue_rel = os.path.relpath(queue_dir, work_dir)
@@ -122,6 +181,44 @@ def list_files(dir_path, suffix):
     if not os.path.isdir(dir_path):
         return []
     return [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(suffix)]
+
+def atomic_write_text(path, text):
+    tmp_path = None
+    target_dir = os.path.dirname(path) or "."
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target_dir, delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(text)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, path)
+    except Exception as e:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        print(f"error: atomic write failed for {path}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+def atomic_write_json(path, payload):
+    tmp_path = None
+    target_dir = os.path.dirname(path) or "."
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target_dir, delete=False) as tmp:
+            tmp_path = tmp.name
+            json.dump(payload, tmp, ensure_ascii=False, indent=2)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, path)
+    except Exception as e:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        print(f"error: atomic write failed for {path}: {e}", file=sys.stderr)
+        sys.exit(1)
 
 worker_count = 3
 if os.path.exists(config_file):
@@ -399,8 +496,7 @@ lines.append("## ❓ メモ（任意）")
 lines.append("なし")
 lines.append("")
 
-with open(dashboard_file, "w", encoding="utf-8") as f:
-    f.write("\n".join(lines))
+atomic_write_text(dashboard_file, "\n".join(lines))
 
 # 完了した若衆のタスクファイルをリセット（シノギ中から消すため）
 IDLE_TASK_TEMPLATE = """schema_version: 1
@@ -449,8 +545,7 @@ task:
 for worker_id in completed_worker_ids:
     task_path = os.path.join(tasks_dir, f"{worker_id}.yaml")
     if os.path.exists(task_path):
-        with open(task_path, "w", encoding="utf-8") as f:
-            f.write(IDLE_TASK_TEMPLATE.format(worker_id=worker_id, queue_rel=queue_rel))
+        atomic_write_text(task_path, IDLE_TASK_TEMPLATE.format(worker_id=worker_id, queue_rel=queue_rel))
 
 index_payload = {"processed_reports": []}
 for r in reports:
@@ -463,8 +558,7 @@ for r in reports:
     except FileNotFoundError:
         pass
 
-with open(index_file, "w", encoding="utf-8") as f:
-    json.dump(index_payload, f, ensure_ascii=False, indent=2)
+atomic_write_json(index_file, index_payload)
 
 # dashboard 更新とは分離し、全完了時のみ親分へ報告
 if current_cmd_id and all_tasks_completed_for_current_cmd:

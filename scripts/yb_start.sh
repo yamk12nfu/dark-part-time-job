@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ORCH_ROOT/scripts/yb_prompt_lib.sh"
 
 repo_root="."
 session_id=""
@@ -156,6 +157,12 @@ EOF
     fi
   done
 fi
+
+# Check .yamibaito/prompts integrity before resolving prompts
+check_prompt_link "$repo_root" || exit 1
+
+oyabun_prompt="$(resolve_prompt_path "$repo_root" "oyabun.md")" || { echo "ERROR: oyabun.md not found in $repo_root/prompts/" >&2; exit 1; }
+waka_prompt="$(resolve_prompt_path "$repo_root" "waka.md")" || { echo "ERROR: waka.md not found in $repo_root/prompts/" >&2; exit 1; }
 
 if tmux has-session -t "$session_name" 2>/dev/null; then
   echo "tmux session already exists: $session_name" >&2
@@ -327,9 +334,6 @@ with open(path, "r", encoding="utf-8") as f:
     print(json.load(f)["waka"])
 PY
 )
-
-oyabun_prompt="$repo_root/.yamibaito/prompts/oyabun.md"
-waka_prompt="$repo_root/.yamibaito/prompts/waka.md"
 
 tmux send-keys -t "$session_name:$oyabun_pane" "claude --dangerously-skip-permissions" C-m
 sleep 2

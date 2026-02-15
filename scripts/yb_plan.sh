@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ORCH_ROOT/scripts/yb_prompt_lib.sh"
 
 repo_root="."
 title=""
@@ -73,6 +74,12 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
   exit 1
 fi
 
+# Resolve plan prompt from single source of truth
+# Check .yamibaito/prompts integrity before resolving prompts
+check_prompt_link "$repo_root" || exit 1
+
+plan_prompt="$(resolve_prompt_path "$repo_root" "plan.md")" || { echo "ERROR: plan.md not found in $repo_root/prompts/" >&2; exit 1; }
+
 tmux new-session -d -s "$session_name" -n plan
 # Split a small bottom pane for Codex.
 tmux split-window -v -p 20 -t "$session_name":0
@@ -88,15 +95,6 @@ tmux send-keys -t "$session_name":0.1 "export PATH=\"$ORCH_ROOT/bin:\$PATH\" YB_
 tmux send-keys -t "$session_name":0.0 "claude --dangerously-skip-permissions" C-m
 tmux send-keys -t "$session_name":0.1 "echo \"Run: yb plan-review\" && echo \"(writes: $plan_dir/plan_review_report.md)\"" C-m
 sleep 2
-# Ensure latest plan prompt is available
-plan_prompt_src="$ORCH_ROOT/prompts/plan.md"
-plan_prompt_dst="$repo_root/.yamibaito/prompts/plan.md"
-if [ -f "$plan_prompt_src" ]; then
-  mkdir -p "$(dirname "$plan_prompt_dst")"
-  cp "$plan_prompt_src" "$plan_prompt_dst"
-fi
-
-plan_prompt="$plan_prompt_dst"
 tmux send-keys -t "$session_name":0.0 "Please read file: \"$plan_prompt\" and follow it. You are the planner." C-m
 sleep 2
 tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for Codex review, plan_review_report.md is for Codex review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"plan-review\", run: yb plan-review." C-m

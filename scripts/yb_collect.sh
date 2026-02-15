@@ -16,6 +16,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lock-timeout)
       lock_timeout="$2"
+      if ! [[ "$lock_timeout" =~ ^[0-9]+$ ]]; then
+        echo "error: --lock-timeout must be a non-negative integer (got '$lock_timeout')" >&2
+        exit 1
+      fi
       shift 2
       ;;
     *)

@@ -170,8 +170,6 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
   exit 1
 fi
 
-pane_total=$((2 + worker_count))
-
 tmux new-session -d -s "$session_name" -n main
 
 # Layout:
@@ -212,10 +210,19 @@ fi
 
 pane_map="$repo_root/.yamibaito/panes${session_suffix}.json"
 
-SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" WORKTREE_ROOT="$worktree_root" WORK_DIR="$work_dir" WORKTREE_BRANCH="$worktree_branch" QUEUE_DIR="$queue_dir" python3 - <<'PY'
-import json
+SESSION_NAME="$session_name" REPO_ROOT="$repo_root" WORKER_COUNT="$worker_count" PANE_MAP="$pane_map" WORKTREE_ROOT="$worktree_root" WORK_DIR="$work_dir" WORKTREE_BRANCH="$worktree_branch" QUEUE_DIR="$queue_dir" ORCH_ROOT="$ORCH_ROOT" python3 - <<'PY'
 import os
+import sys
 import subprocess
+
+ORCH_ROOT = os.environ.get("ORCH_ROOT", "")
+if ORCH_ROOT:
+    sys.path.insert(0, os.path.join(ORCH_ROOT, "scripts"))
+try:
+    from lib.panes import dump_panes_v2
+except ModuleNotFoundError as _exc:
+    print(f"error: {_exc} — ORCH_ROOT={ORCH_ROOT!r}/scripts/lib/panes.py を確認してください", file=sys.stderr)
+    sys.exit(1)
 
 session = os.environ["SESSION_NAME"]
 repo_root = os.environ["REPO_ROOT"]
@@ -272,20 +279,23 @@ for i in range(worker_count):
             worker_name_map[wid] = worker_names[i]
 
 mapping = {
+    "schema_version": 2,
     "session": session,
     "repo_root": repo_root,
-    "worktree_root": worktree_root if worktree_root else None,
+    "worktree": {
+        "enabled": bool(worktree_root or worktree_branch),
+        "root": worktree_root,
+        "branch": worktree_branch,
+    },
     "work_dir": work_dir_val,
-    "worktree_branch": worktree_branch if worktree_branch else None,
-    "queue_dir": queue_dir_val if queue_dir_val else None,
+    "queue_dir": queue_dir_val,
     "oyabun": f"0.{oyabun}",
     "waka": f"0.{waka}",
     "workers": workers,
     "worker_names": worker_name_map,
 }
 
-with open(pane_map, "w", encoding="utf-8") as f:
-    json.dump(mapping, f, ensure_ascii=False, indent=2)
+dump_panes_v2(pane_map, mapping)
 
 subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{oyabun}", "-T", "oyabun"], check=False)
 subprocess.run(["tmux", "select-pane", "-t", f"{session}:0.{waka}", "-T", "waka"], check=False)

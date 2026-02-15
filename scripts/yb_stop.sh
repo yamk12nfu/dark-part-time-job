@@ -54,39 +54,27 @@ if [ "$keep_worktree" = "false" ] && [ -n "$session_id" ]; then
   panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
   wt_branch=""
   if [ -f "$panes_file" ]; then
-    wt_branch=$(python3 -c "
-import json, sys
+    wt_branch=$(ORCH_ROOT="$ORCH_ROOT" PANES_FILE="$panes_file" python3 -c "
+import os, sys
+_orch = os.environ.get(\"ORCH_ROOT\", \"\")
+if _orch:
+    sys.path.insert(0, os.path.join(_orch, \"scripts\"))
 try:
-    with open('$panes_file', 'r') as f:
-        data = json.load(f)
-    branch = data.get('worktree_branch')
-    if isinstance(branch, str) and branch:
-        print(branch)
-    else:
-        sys.exit(1)
-except (json.JSONDecodeError, OSError, KeyError):
+    from lib.panes import load_panes
+except ModuleNotFoundError as _exc:
+    print(f\"error: {_exc} — ORCH_ROOT={_orch!r}/scripts/lib/panes.py を確認してください\", file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null) || true
-  fi
-  # フォールバック: config の branch_prefix + session_id
-  if [ -z "$wt_branch" ]; then
-    config_file="$repo_root/.yamibaito/config.yaml"
-    wt_prefix="yamibaito"
-    if [ -f "$config_file" ]; then
-      cfg_prefix=$(python3 -c "
-import sys
-for line in open('$config_file'):
-    if 'branch_prefix' in line and ':' in line:
-        print(line.split(':',1)[1].strip().strip('\"').strip(\"'\"))
-        sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) || true
-      if [ -n "$cfg_prefix" ]; then
-        wt_prefix="$cfg_prefix"
-      fi
-    fi
-    wt_branch="${wt_prefix}/${session_id}"
-    echo "warning: panes.json から worktree_branch を取得できず、${wt_branch} を推定して削除を試みます" >&2
+try:
+    data = load_panes(os.environ['PANES_FILE'])
+    worktree = data.get('worktree', {})
+    enabled = worktree.get('enabled', False)
+    branch = worktree.get('branch', '')
+    if enabled and branch:
+        print(branch)
+except Exception as exc:
+    print(f"warning: panes branch extraction failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+") || true
   fi
   if [ -n "$wt_branch" ]; then
     echo "worktree を削除: $wt_branch"

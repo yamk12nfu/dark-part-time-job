@@ -1,19 +1,19 @@
 # 15計画 進捗チェックリスト
 
 - 最終更新日時: 2026-02-15（手動更新の運用を想定）
-- 全体進捗サマリ: 完了 1/15、進行中 0/15、未着手 14/15
+- 全体進捗サマリ: 完了 2/15、進行中 0/15、未着手 13/15
 - 参照: [依存関係マップ](dependency-map.md)
 
 ## Phase 1: 基盤修正
 
-- [x] **[fix-prompts-single-source](fix-prompts-single-source/)** — `prompts/` を単一正本に統一し、起動・計画時の参照を一本化する。
+- [x] **[fix-prompts-single-source](../resolved/fix-prompts-single-source/)** — `prompts/` を単一正本に統一し、起動・計画時の参照を一本化する。
   - 対象: `scripts/yb_init_repo.sh`, `scripts/yb_start.sh`, `scripts/yb_plan.sh`, `prompts/*.md`
   - 依存: なし
   - 状態: 完了
-- [ ] **[fix-panes-schema](fix-panes-schema/)** — `panes*.json` を `schema_version: 2` の非 nullable 構造へ移行し、読み取りロジックを共通化する。
+- [x] **[fix-panes-schema](../resolved/fix-panes-schema/)** — `panes*.json` を `schema_version: 2` の非 nullable 構造へ移行し、読み取りロジックを共通化する。
   - 対象: `scripts/lib/panes.py`（新規）, `scripts/yb_start.sh`, `scripts/yb_restart.sh`, `scripts/yb_stop.sh`, `scripts/yb_worktree_list.sh`
   - 依存: なし
-  - 状態: 未着手
+  - 状態: 完了
 - [ ] **[fix-dashboard-atomic-write](fix-dashboard-atomic-write/)** — `yb collect` に lock と atomic write を導入し、同時実行時の更新取りこぼしを防ぐ。
   - 対象: `scripts/yb_collect.sh`
   - 依存: なし

@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 repo_root="."
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,8 +24,17 @@ if ! command -v git-gtr &>/dev/null; then
   exit 1
 fi
 
-REPO_ROOT="$repo_root" python3 - <<'PY'
-import json, os, glob, subprocess
+REPO_ROOT="$repo_root" ORCH_ROOT="$ORCH_ROOT" python3 - <<'PY'
+import glob, os, subprocess, sys
+
+_orch = os.environ.get("ORCH_ROOT", "")
+if _orch:
+    sys.path.insert(0, os.path.join(_orch, "scripts"))
+try:
+    from lib.panes import load_panes
+except ModuleNotFoundError as _exc:
+    print(f"error: {_exc} — ORCH_ROOT={_orch!r}/scripts/lib/panes.py を確認してください", file=sys.stderr)
+    sys.exit(1)
 
 repo_root = os.environ["REPO_ROOT"]
 yamibaito_dir = os.path.join(repo_root, ".yamibaito")
@@ -32,16 +43,27 @@ yamibaito_dir = os.path.join(repo_root, ".yamibaito")
 sessions = {}
 for panes_path in glob.glob(os.path.join(yamibaito_dir, "panes*.json")):
     try:
-        with open(panes_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        branch = data.get("worktree_branch")
-        if branch:
-            sessions[branch] = {
-                "session": data.get("session", ""),
-                "worktree_root": data.get("worktree_root", ""),
-                "work_dir": data.get("work_dir", ""),
-            }
-    except (json.JSONDecodeError, OSError):
+        data = load_panes(panes_path)
+        worktree = data.get("worktree", {})
+        enabled = worktree.get("enabled", False)
+        root = worktree.get("root", "")
+        branch = worktree.get("branch", "")
+        if enabled:
+            if not branch:
+                continue
+            session_key = f"branch:{branch}"
+            display_branch = branch
+        else:
+            session_name = data.get("session", "")
+            session_key = f"session:{session_name or os.path.basename(panes_path)}"
+            display_branch = "-"
+        sessions[session_key] = {
+            "session": data.get("session", ""),
+            "branch": display_branch,
+            "worktree_root": root,
+            "work_dir": data.get("work_dir", ""),
+        }
+    except (OSError, KeyError, TypeError):
         pass
 
 # gtr list を取得
@@ -76,8 +98,9 @@ print("-" * 120)
 
 # panes に記録されているセッション
 printed = set()
-for branch, info in sessions.items():
+for info in sessions.values():
     session_name = info["session"]
+    branch = info["branch"]
     wt_path = info.get("worktree_root") or info.get("work_dir") or "-"
     # tmux セッションの存在確認
     try:
@@ -89,7 +112,8 @@ for branch, info in sessions.items():
     except (subprocess.CalledProcessError, FileNotFoundError):
         status = "stopped"
     print(f"{session_name:<30} {branch:<30} {wt_path:<50} {status}")
-    printed.add(branch)
+    if branch != "-":
+        printed.add(branch)
 
 # gtr にあるが panes に記録されていない worktree
 for branch in sorted(gtr_branches):

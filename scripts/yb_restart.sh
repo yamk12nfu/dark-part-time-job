@@ -47,21 +47,27 @@ panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
 wt_root=""
 wt_branch=""
 if [ -n "$session_id" ] && [ -f "$panes_file" ]; then
-  wt_info=$(python3 -c "
-import json, sys
+  wt_info=$(ORCH_ROOT="$ORCH_ROOT" PANES_FILE="$panes_file" python3 -c "
+import os, sys
+_orch = os.environ.get('ORCH_ROOT', '')
+if _orch:
+    sys.path.insert(0, os.path.join(_orch, 'scripts'))
 try:
-    with open('$panes_file', 'r') as f:
-        data = json.load(f)
-    root = data.get('worktree_root')
-    branch = data.get('worktree_branch')
-    if not isinstance(root, str):
-        root = ''
-    if not isinstance(branch, str):
-        branch = ''
-    print(f'{root}\\t{branch}')
-except (json.JSONDecodeError, OSError, KeyError):
+    from lib.panes import load_panes
+except ModuleNotFoundError as _exc:
+    print(f\"error: {_exc} — ORCH_ROOT={_orch!r}/scripts/lib/panes.py を確認してください\", file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null) || true
+
+data = load_panes(os.environ['PANES_FILE'])
+worktree = data.get('worktree', {})
+enabled = worktree.get('enabled', False)
+root = worktree.get('root', '')
+branch = worktree.get('branch', '')
+if enabled:
+    print(f\"{root}\\t{branch}\")
+else:
+    print('\\t')
+") || true
   if [ -n "${wt_info:-}" ]; then
     IFS=$'\t' read -r wt_root wt_branch <<< "$wt_info"
   fi
@@ -93,33 +99,14 @@ if [ "$delete_worktree" = "true" ] && [ -n "$session_id" ]; then
       echo "warning: worktree remove '$wt_root' に失敗しました。手動で確認してください。" >&2
     fi
   else
-    # フォールバック: config の branch_prefix + session_id
-    if [ -z "$wt_branch" ]; then
-      config_file="$repo_root/.yamibaito/config.yaml"
-      wt_prefix="yamibaito"
-      if [ -f "$config_file" ]; then
-        cfg_prefix=$(python3 -c "
-import sys
-for line in open('$config_file'):
-    if 'branch_prefix' in line and ':' in line:
-        print(line.split(':',1)[1].strip().strip('\"').strip(\"'\"))
-        sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) || true
-        if [ -n "$cfg_prefix" ]; then
-          wt_prefix="$cfg_prefix"
-        fi
-      fi
-      wt_branch="${wt_prefix}/${session_id}"
-      echo "warning: panes.json から worktree_root/worktree_branch を取得できず、${wt_branch} を推定して削除を試みます" >&2
-    else
-      echo "warning: worktree_root がないため branch ベース削除にフォールバックします: $wt_branch" >&2
-    fi
     if [ -n "$wt_branch" ]; then
+      echo "warning: worktree_root がないため branch ベース削除にフォールバックします: $wt_branch" >&2
       echo "worktree を削除(branch fallback): $wt_branch"
       if ! git -C "$repo_root" gtr rm "$wt_branch" --yes 2>&1; then
         echo "warning: gtr rm '$wt_branch' に失敗しました。手動で確認してください。" >&2
       fi
+    else
+      echo "info: worktree が未使用のため削除対象はありません" >&2
     fi
   fi
 fi
@@ -162,25 +149,6 @@ EOF
     "$ORCH_ROOT/scripts/yb_start.sh" "${start_args[@]}"
 fi
 
-if [ -n "$session_id" ] && [ -z "$wt_branch" ]; then
-  config_file="$repo_root/.yamibaito/config.yaml"
-  wt_prefix="yamibaito"
-  if [ -f "$config_file" ]; then
-    cfg_prefix=$(python3 -c "
-import sys
-for line in open('$config_file'):
-    if 'branch_prefix' in line and ':' in line:
-        print(line.split(':',1)[1].strip().strip('\"').strip(\"'\"))
-        sys.exit(0)
-sys.exit(1)
-" 2>/dev/null) || true
-    if [ -n "$cfg_prefix" ]; then
-      wt_prefix="$cfg_prefix"
-    fi
-  fi
-  wt_branch="${wt_prefix}/${session_id}"
-  echo "warning: panes.json から worktree_branch を取得できず、${wt_branch} を推定します" >&2
-fi
 exec env YB_RESTART_WORKTREE_ROOT="$wt_root" \
   YB_RESTART_WORKTREE_BRANCH="$wt_branch" \
   "$ORCH_ROOT/scripts/yb_start.sh" "${start_args[@]}"

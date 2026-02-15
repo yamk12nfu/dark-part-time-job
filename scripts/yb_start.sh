@@ -66,6 +66,9 @@ wait_for_claude_ready() {
       if [ -n "$last_non_empty_line" ] && printf '%s\n' "$last_non_empty_line" | grep -Eq "$YB_READINESS_PATTERN"; then
         return 0
       fi
+    else
+      WAIT_READY_ERROR_REASON="pane_dead"
+      return 2
     fi
     sleep 1
     elapsed=$((elapsed + 1))
@@ -434,7 +437,13 @@ else
   if [ "$oyabun_ready_rc" -eq 2 ]; then
     if [ "$WAIT_READY_ERROR_REASON" = "tmux_error" ]; then
       echo "ERROR: tmux error while waiting for claude readiness: oyabun (pane $oyabun_target)" >&2
+    elif [ "$WAIT_READY_ERROR_REASON" = "pane_dead" ]; then
+      echo "ERROR: pane process exited while waiting for claude readiness: oyabun (pane $oyabun_target)" >&2
+      print_last_pane_output "$oyabun_target"
+    elif [ "$WAIT_READY_ERROR_REASON" = "invalid_pattern" ]; then
+      echo "ERROR: invalid readiness pattern: $YB_READINESS_PATTERN" >&2
     fi
+    echo "Hint: run '$cleanup_hint' to clean up" >&2
     exit 1
   fi
   echo "ERROR: claude readiness timeout: oyabun (pane $oyabun_target, waited ${oyabun_timeout}s). Hint: run '$cleanup_hint' to clean up" >&2
@@ -450,7 +459,13 @@ else
   if [ "$waka_ready_rc" -eq 2 ]; then
     if [ "$WAIT_READY_ERROR_REASON" = "tmux_error" ]; then
       echo "ERROR: tmux error while waiting for claude readiness: waka (pane $waka_target)" >&2
+    elif [ "$WAIT_READY_ERROR_REASON" = "pane_dead" ]; then
+      echo "ERROR: pane process exited while waiting for claude readiness: waka (pane $waka_target)" >&2
+      print_last_pane_output "$waka_target"
+    elif [ "$WAIT_READY_ERROR_REASON" = "invalid_pattern" ]; then
+      echo "ERROR: invalid readiness pattern: $YB_READINESS_PATTERN" >&2
     fi
+    echo "Hint: run '$cleanup_hint' to clean up" >&2
     exit 1
   fi
   echo "ERROR: claude readiness timeout: waka (pane $waka_target, waited ${waka_timeout}s). Hint: run '$cleanup_hint' to clean up" >&2

@@ -158,6 +158,12 @@ EOF
   done
 fi
 
+# Check .yamibaito/prompts integrity before resolving prompts
+check_prompt_link "$repo_root" || exit 1
+
+oyabun_prompt="$(resolve_prompt_path "$repo_root" "oyabun.md")" || { echo "ERROR: oyabun.md not found in $repo_root/prompts/" >&2; exit 1; }
+waka_prompt="$(resolve_prompt_path "$repo_root" "waka.md")" || { echo "ERROR: waka.md not found in $repo_root/prompts/" >&2; exit 1; }
+
 if tmux has-session -t "$session_name" 2>/dev/null; then
   echo "tmux session already exists: $session_name" >&2
   echo "Attach with: tmux attach -t $session_name" >&2
@@ -328,12 +334,6 @@ with open(path, "r", encoding="utf-8") as f:
     print(json.load(f)["waka"])
 PY
 )
-
-# Check .yamibaito/prompts integrity before resolving prompts
-check_prompt_link "$repo_root" || exit 1
-
-oyabun_prompt="$(resolve_prompt_path "$repo_root" "oyabun.md")" || { echo "ERROR: oyabun.md not found in $repo_root/prompts/" >&2; exit 1; }
-waka_prompt="$(resolve_prompt_path "$repo_root" "waka.md")" || { echo "ERROR: waka.md not found in $repo_root/prompts/" >&2; exit 1; }
 
 tmux send-keys -t "$session_name:$oyabun_pane" "claude --dangerously-skip-permissions" C-m
 sleep 2

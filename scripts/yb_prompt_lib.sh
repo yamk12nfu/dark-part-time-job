@@ -134,7 +134,7 @@ check_prompt_link() {
   fi
 
   if [ -L "$prompts_link" ] && [ ! -d "$prompts_link" ]; then
-    echo "ERROR: $prompts_link is a broken symlink (target: $(readlink "$prompts_link")). Run 'yb init --repo $repo_root' to fix." >&2
+    echo "ERROR: $prompts_link is a symlink but does not point to a directory (target: $(readlink "$prompts_link")). Run 'yb init --repo $repo_root' to fix." >&2
     return 1
   fi
 

@@ -72,7 +72,7 @@ try:
     if enabled and branch:
         print(branch)
 except Exception as exc:
-    print(f"warning: panes branch extraction failed: {exc}", file=sys.stderr)
+    print(f\"warning: panes branch extraction failed: {exc}\", file=sys.stderr)
     sys.exit(1)
 ") || true
   fi

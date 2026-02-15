@@ -4,80 +4,6 @@ set -euo pipefail
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ORCH_ROOT/scripts/yb_prompt_lib.sh"
 
-_yb_timeout_raw="${YB_READINESS_TIMEOUT:-${READINESS_TIMEOUT:-}}"
-if [ -z "$_yb_timeout_raw" ]; then
-  YB_READINESS_TIMEOUT=45
-elif [[ "$_yb_timeout_raw" =~ ^[1-9][0-9]*$ ]]; then
-  YB_READINESS_TIMEOUT="$_yb_timeout_raw"
-else
-  echo "ERROR: invalid YB_READINESS_TIMEOUT=$_yb_timeout_raw (must be a positive integer)" >&2
-  exit 1
-fi
-YB_READINESS_PATTERN="${YB_READINESS_PATTERN:-${READINESS_PATTERN:-^(> |❯ ?)}}"
-WAIT_READY_ERROR_REASON=""
-
-print_last_pane_output() {
-  local pane="$1"
-  local pane_tail=""
-
-  echo "--- last pane output ---" >&2
-  if pane_tail="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null)"; then
-    if [ -n "$pane_tail" ]; then
-      printf '%s\n' "$pane_tail" >&2
-    else
-      echo "(no output)" >&2
-    fi
-  else
-    echo "(failed to capture pane output)" >&2
-  fi
-}
-
-wait_for_claude_ready() {
-  local pane="$1"
-  local timeout_sec="${2:-$YB_READINESS_TIMEOUT}"
-  local elapsed=0
-  local pane_dead=""
-  local pane_tail=""
-  local last_non_empty_line=""
-  local pattern_check_rc=0
-
-  WAIT_READY_ERROR_REASON=""
-  printf '' | grep -Eq "$YB_READINESS_PATTERN" 2>/dev/null
-  pattern_check_rc=$?
-  if [ "$pattern_check_rc" -eq 2 ]; then
-    echo "ERROR: invalid YB_READINESS_PATTERN=$YB_READINESS_PATTERN" >&2
-    WAIT_READY_ERROR_REASON="invalid_pattern"
-    return 2
-  fi
-
-  while [ "$elapsed" -lt "$timeout_sec" ]; do
-    if ! pane_dead="$(tmux display-message -p -t "$pane" "#{pane_dead}" 2>/dev/null)"; then
-      WAIT_READY_ERROR_REASON="tmux_error"
-      return 2
-    fi
-
-    if [ "$pane_dead" = "0" ]; then
-      if ! pane_tail="$(tmux capture-pane -p -t "$pane" -S -5 2>/dev/null)"; then
-        WAIT_READY_ERROR_REASON="tmux_error"
-        return 2
-      fi
-
-      last_non_empty_line="$(printf '%s\n' "$pane_tail" | awk 'NF {line=$0} END {print line}')"
-      if [ -n "$last_non_empty_line" ] && printf '%s\n' "$last_non_empty_line" | grep -Eq "$YB_READINESS_PATTERN"; then
-        return 0
-      fi
-    else
-      WAIT_READY_ERROR_REASON="pane_dead"
-      return 2
-    fi
-    sleep 1
-    elapsed=$((elapsed + 1))
-  done
-
-  WAIT_READY_ERROR_REASON="timeout"
-  return 1
-}
-
 repo_root="."
 session_id=""
 from_ref=""
@@ -419,59 +345,14 @@ with open(path, "r", encoding="utf-8") as f:
 PY
 )
 
-oyabun_target="$session_name:$oyabun_pane"
-waka_target="$session_name:$waka_pane"
-if [ -n "$session_id" ]; then
-  cleanup_hint="yb stop --session $session_id"
-else
-  cleanup_hint="yb stop --repo $repo_root"
-fi
-oyabun_timeout="$YB_READINESS_TIMEOUT"
-waka_timeout="$YB_READINESS_TIMEOUT"
+tmux send-keys -t "$session_name:$oyabun_pane" "claude --dangerously-skip-permissions" C-m
+sleep 2
+tmux send-keys -t "$session_name:$waka_pane" "claude --dangerously-skip-permissions" C-m
 
-tmux send-keys -t "$oyabun_target" "claude --dangerously-skip-permissions" C-m
-if wait_for_claude_ready "$oyabun_target" "$oyabun_timeout"; then
-  tmux send-keys -t "$oyabun_target" "Please read file: \"$oyabun_prompt\" and follow it. You are the oyabun." C-m
-else
-  oyabun_ready_rc=$?
-  if [ "$oyabun_ready_rc" -eq 2 ]; then
-    if [ "$WAIT_READY_ERROR_REASON" = "tmux_error" ]; then
-      echo "ERROR: tmux error while waiting for claude readiness: oyabun (pane $oyabun_target)" >&2
-    elif [ "$WAIT_READY_ERROR_REASON" = "pane_dead" ]; then
-      echo "ERROR: pane process exited while waiting for claude readiness: oyabun (pane $oyabun_target)" >&2
-      print_last_pane_output "$oyabun_target"
-    elif [ "$WAIT_READY_ERROR_REASON" = "invalid_pattern" ]; then
-      echo "ERROR: invalid readiness pattern: $YB_READINESS_PATTERN" >&2
-    fi
-    echo "Hint: run '$cleanup_hint' to clean up" >&2
-    exit 1
-  fi
-  echo "ERROR: claude readiness timeout: oyabun (pane $oyabun_target, waited ${oyabun_timeout}s). Hint: run '$cleanup_hint' to clean up" >&2
-  print_last_pane_output "$oyabun_target"
-  exit 1
-fi
-
-tmux send-keys -t "$waka_target" "claude --dangerously-skip-permissions" C-m
-if wait_for_claude_ready "$waka_target" "$waka_timeout"; then
-  tmux send-keys -t "$waka_target" "Please read file: \"$waka_prompt\" and follow it. You are the waka." C-m
-else
-  waka_ready_rc=$?
-  if [ "$waka_ready_rc" -eq 2 ]; then
-    if [ "$WAIT_READY_ERROR_REASON" = "tmux_error" ]; then
-      echo "ERROR: tmux error while waiting for claude readiness: waka (pane $waka_target)" >&2
-    elif [ "$WAIT_READY_ERROR_REASON" = "pane_dead" ]; then
-      echo "ERROR: pane process exited while waiting for claude readiness: waka (pane $waka_target)" >&2
-      print_last_pane_output "$waka_target"
-    elif [ "$WAIT_READY_ERROR_REASON" = "invalid_pattern" ]; then
-      echo "ERROR: invalid readiness pattern: $YB_READINESS_PATTERN" >&2
-    fi
-    echo "Hint: run '$cleanup_hint' to clean up" >&2
-    exit 1
-  fi
-  echo "ERROR: claude readiness timeout: waka (pane $waka_target, waited ${waka_timeout}s). Hint: run '$cleanup_hint' to clean up" >&2
-  print_last_pane_output "$waka_target"
-  exit 1
-fi
+sleep 5
+tmux send-keys -t "$session_name:$oyabun_pane" "Please read file: \"$oyabun_prompt\" and follow it. You are the oyabun." C-m
+sleep 2
+tmux send-keys -t "$session_name:$waka_pane" "Please read file: \"$waka_prompt\" and follow it. You are the waka." C-m
 
 echo "yb start: tmux session created: $session_name"
 echo "Attach with: tmux attach -t $session_name"

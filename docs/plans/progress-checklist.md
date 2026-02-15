@@ -14,14 +14,14 @@
   - 対象: `scripts/lib/panes.py`（新規）, `scripts/yb_start.sh`, `scripts/yb_restart.sh`, `scripts/yb_stop.sh`, `scripts/yb_worktree_list.sh`
   - 依存: なし
   - 状態: 完了
-- [ ] **[fix-dashboard-atomic-write](fix-dashboard-atomic-write/)** — `yb collect` に lock と atomic write を導入し、同時実行時の更新取りこぼしを防ぐ。
+- [x] **[fix-dashboard-atomic-write](fix-dashboard-atomic-write/)** — `yb collect` に lock と atomic write を導入し、同時実行時の更新取りこぼしを防ぐ。
   - 対象: `scripts/yb_collect.sh`
   - 依存: なし
   - 状態: 未着手
 - [ ] **[fix-startup-readiness](fix-startup-readiness/)** — `yb start` の固定 `sleep` を readiness check に置換し、起動成功判定を堅牢化する。
   - 対象: `scripts/yb_start.sh`
   - 依存: なし
-  - 状態: 未着手
+  - 状態: 着手したが不具合を起こしてrevert. 見送り
 
 ## Phase 2: 依存解決
 

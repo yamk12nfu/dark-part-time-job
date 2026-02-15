@@ -104,6 +104,8 @@ def load_panes(path: str) -> dict:
         return normalize_panes(data)
 
     _warn(f"unknown schema_version={schema_version!r} in {path}; returning as-is")
+    if not isinstance(data.get("worktree"), dict):
+        data["worktree"] = {"enabled": False, "root": "", "branch": ""}
     return data
 
 

@@ -71,7 +71,8 @@ try:
     branch = worktree.get('branch', '')
     if enabled and branch:
         print(branch)
-except Exception:
+except Exception as exc:
+    print(f"warning: panes branch extraction failed: {exc}", file=sys.stderr)
     sys.exit(1)
 ") || true
   fi

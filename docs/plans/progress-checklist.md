@@ -6,11 +6,11 @@
 
 ## Phase 1: 基盤修正
 
-- [x] **[fix-prompts-single-source](fix-prompts-single-source/)** — `prompts/` を単一正本に統一し、起動・計画時の参照を一本化する。
+- [x] **[fix-prompts-single-source](../resolved/fix-prompts-single-source/)** — `prompts/` を単一正本に統一し、起動・計画時の参照を一本化する。
   - 対象: `scripts/yb_init_repo.sh`, `scripts/yb_start.sh`, `scripts/yb_plan.sh`, `prompts/*.md`
   - 依存: なし
   - 状態: 完了
-- [x] **[fix-panes-schema](fix-panes-schema/)** — `panes*.json` を `schema_version: 2` の非 nullable 構造へ移行し、読み取りロジックを共通化する。
+- [x] **[fix-panes-schema](../resolved/fix-panes-schema/)** — `panes*.json` を `schema_version: 2` の非 nullable 構造へ移行し、読み取りロジックを共通化する。
   - 対象: `scripts/lib/panes.py`（新規）, `scripts/yb_start.sh`, `scripts/yb_restart.sh`, `scripts/yb_stop.sh`, `scripts/yb_worktree_list.sh`
   - 依存: なし
   - 状態: 完了

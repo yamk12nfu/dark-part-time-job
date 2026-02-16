@@ -75,10 +75,8 @@ if tmux has-session -t "$session_name" 2>/dev/null; then
 fi
 
 # Resolve plan prompt from single source of truth
-# Check .yamibaito/prompts integrity before resolving prompts
-check_prompt_link "$repo_root" || exit 1
 
-plan_prompt="$(resolve_prompt_path "$repo_root" "plan.md")" || { echo "ERROR: plan.md not found in $repo_root/prompts/" >&2; exit 1; }
+plan_prompt="$(resolve_prompt_path "$repo_root" "plan.md")" || { echo "ERROR: plan.md not found in $repo_root/.yamibaito/prompts/" >&2; exit 1; }
 
 tmux new-session -d -s "$session_name" -n plan
 # Split a small bottom pane for Codex.

@@ -4,20 +4,13 @@ set -euo pipefail
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 repo_root="."
-migrate_prompts=false
-# Usage: yb init --repo <repo_root> [--migrate-prompts]
+# Usage: yb init --repo <repo_root>
 #   --repo <path>        Target repository root (default: .)
-#   --migrate-prompts    Convert legacy .yamibaito/prompts/ directory to symlink.
-#                        Backs up existing directory to .yamibaito/prompts.bak.<timestamp>.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       repo_root="$2"
       shift 2
-      ;;
-    --migrate-prompts)
-      migrate_prompts=true
-      shift
       ;;
     *)
       echo "Unknown arg: $1" >&2
@@ -63,32 +56,37 @@ if [ ! -f "$repo_root/dashboard.md" ]; then
   cp "$ORCH_ROOT/templates/dashboard.md" "$repo_root/dashboard.md"
 fi
 
-# === Seed prompt files for new repos ===
-prompts_dir="$repo_root/prompts"
+# === Prompt files ===
+prompts_dir="$config_dir/prompts"
+
+# レガシー symlink の除去（.yamibaito/prompts が ../prompts への symlink だった場合）
+if [ -L "$prompts_dir" ]; then
+  rm "$prompts_dir"
+  echo "MIGRATION: .yamibaito/prompts の旧 symlink を除去しました。" >&2
+fi
+
+# Legacy migration: repo_root/prompts/ → .yamibaito/prompts/
+legacy_prompts_dir="$repo_root/prompts"
+if [ -d "$legacy_prompts_dir" ] && { [ ! -d "$prompts_dir" ] || [ -z "$(ls -A "$prompts_dir" 2>/dev/null)" ]; }; then
+  mkdir -p "$prompts_dir"
+  for f in "$legacy_prompts_dir"/*.md; do
+    [ -f "$f" ] || continue
+    fname="$(basename "$f")"
+    if [ ! -f "$prompts_dir/$fname" ]; then
+      cp "$f" "$prompts_dir/$fname"
+    fi
+  done
+  echo "MIGRATION: prompts/ を .yamibaito/prompts/ にコピーしました。repo_root/prompts/ は不要になったため削除できます。" >&2
+fi
+
+# $ORCH_ROOT/prompts/ からの初期配置（新規リポジトリ用）
 mkdir -p "$prompts_dir"
-for pfile in oyabun.md waka.md wakashu.md plan.md; do
-  if [ ! -f "$prompts_dir/$pfile" ]; then
-    cp "$ORCH_ROOT/prompts/$pfile" "$prompts_dir/$pfile"
+for prompt in oyabun.md waka.md wakashu.md plan.md; do
+  if [ ! -f "$prompts_dir/$prompt" ]; then
+    cp "$ORCH_ROOT/prompts/$prompt" "$prompts_dir/$prompt"
   fi
 done
 
-# === Migration from legacy prompts setup ===
-# 旧構成: .yamibaito/prompts/ が実ディレクトリで、prompts/*.md のコピーを保持
-# 新構成: .yamibaito/prompts は ../prompts（= repo_root/prompts）へのシンボリックリンク
-#
-# 移行手順:
-#   1. yb init --repo <repo_root> --migrate-prompts を実行
-#   2. 旧ディレクトリは .yamibaito/prompts.bak.<timestamp> に退避される
-#   3. 退避ファイルに独自変更がないか確認し、不要なら削除
-#
-# 方針:
-#   シンボリックリンク非対応環境はサポート対象外
-#   ln -s 失敗時は初期化を停止する
-if [ "$migrate_prompts" = true ]; then
-  ensure_prompt_link "$repo_root" --migrate-prompts
-else
-  ensure_prompt_link "$repo_root"
-fi
 validate_required_prompts "$repo_root"
 
 worker_count=$(grep -E "^\\s*codex_count:" "$config_dir/config.yaml" | awk '{print $2}')

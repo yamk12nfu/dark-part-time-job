@@ -63,6 +63,15 @@ if [ ! -f "$repo_root/dashboard.md" ]; then
   cp "$ORCH_ROOT/templates/dashboard.md" "$repo_root/dashboard.md"
 fi
 
+# === Seed prompt files for new repos ===
+prompts_dir="$repo_root/prompts"
+mkdir -p "$prompts_dir"
+for pfile in oyabun.md waka.md wakashu.md plan.md; do
+  if [ ! -f "$prompts_dir/$pfile" ]; then
+    cp "$ORCH_ROOT/prompts/$pfile" "$prompts_dir/$pfile"
+  fi
+done
+
 # === Migration from legacy prompts setup ===
 # 旧構成: .yamibaito/prompts/ が実ディレクトリで、prompts/*.md のコピーを保持
 # 新構成: .yamibaito/prompts は ../prompts（= repo_root/prompts）へのシンボリックリンク

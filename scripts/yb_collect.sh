@@ -202,6 +202,11 @@ def normalize_review_result(value):
     lowered = result.lower()
     return lowered if lowered in ("approve", "rework") else None
 
+def format_review_result_for_display(value):
+    if value is None:
+        return "null"
+    return str(value).strip().strip('"').strip("'")
+
 def normalize_enabled_snapshot(value, default=True):
     normalized = normalize_text(value)
     if normalized is None:
@@ -485,6 +490,7 @@ for report_path in list_files(reports_dir, "_report.yaml"):
 
     report["phase"] = normalize_phase(report.get("phase"))
     report["loop_count"] = parse_non_negative_int(report.get("loop_count"), 0)
+    report["review_result_raw"] = report.get("review_result")
     report["review_result"] = normalize_review_result(report.get("review_result"))
     report["enabled_snapshot"] = normalize_enabled_snapshot(report.get("enabled_snapshot"), True)
     if not report["has_quality_gate_fields"]:
@@ -503,11 +509,12 @@ for report_path in list_files(reports_dir, "_report.yaml"):
 attention = []
 done = []
 skill_candidates = []
-quality_gate_summary = {"review_waiting": 0, "approve": 0, "rework": 0, "escalation": 0}
+quality_gate_summary = {"review_waiting": 0, "approve": 0, "rework": 0, "invalid": 0, "escalation": 0}
 review_checklist_counts = {}
 implemented_gate_ids = set()
 reviewed_gate_ids = set()
 quality_gate_rework_lines = []
+quality_gate_invalid_lines = []
 quality_gate_escalation_lines = []
 completed_worker_ids = set()  # 完了した若衆のID（タスクファイルリセット用）
 for r in reports:
@@ -545,6 +552,7 @@ for r in reports:
         item_counter[result] += 1
 
     review_result = r.get("review_result")
+    review_result_raw = r.get("review_result_raw")
     loop_count = parse_non_negative_int(r.get("loop_count"), 0)
     if r.get("phase") == "review":
         if review_result == "approve":
@@ -559,6 +567,11 @@ for r in reports:
             if loop_count >= max_rework_loops:
                 quality_gate_summary["escalation"] += 1
                 quality_gate_escalation_lines.append(f"- [{gate_id}] エスカレーション: {loop_count}回差し戻し上限超過")
+        else:
+            quality_gate_summary["invalid"] += 1
+            quality_gate_invalid_lines.append(
+                f"- [{gate_id}] ⚠️ 不正な review_result: '{format_review_result_for_display(review_result_raw)}' (worker: {r.get('worker_id') or '-'})"
+            )
 
 quality_gate_summary["review_waiting"] = len(implemented_gate_ids - reviewed_gate_ids)
 
@@ -704,6 +717,7 @@ lines.append("|---|---|")
 lines.append(f"| レビュー待ち | {quality_gate_summary['review_waiting']} |")
 lines.append(f"| approve | {quality_gate_summary['approve']} |")
 lines.append(f"| rework | {quality_gate_summary['rework']} |")
+lines.append(f"| invalid | {quality_gate_summary['invalid']} |")
 lines.append(f"| エスカレーション | {quality_gate_summary['escalation']} |")
 if review_checklist_counts:
     lines.append("")
@@ -721,6 +735,7 @@ for r in attention:
     notes = r.get("notes")
     line = f"- {r.get('task_id')} ({r.get('status')}) {notes or ''}".strip()
     attention_lines.append(line)
+attention_lines.extend(quality_gate_invalid_lines)
 attention_lines.extend(quality_gate_rework_lines)
 attention_lines.extend(quality_gate_escalation_lines)
 if attention_lines:

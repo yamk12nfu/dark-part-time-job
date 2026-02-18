@@ -94,10 +94,8 @@ for i in $(seq 1 "$worker_count"); do
   worker_id=$(printf "worker_%03d" "$i")
   task_file="$tasks_dir/${worker_id}.yaml"
   report_file="$reports_dir/${worker_id}_report.yaml"
-  cp "$ORCH_ROOT/templates/queue/tasks/worker_task.yaml" "$task_file"
-  sed -i "" "s/{{WORKER_ID}}/${worker_id}/g" "$task_file"
-  cp "$ORCH_ROOT/templates/queue/reports/worker_report.yaml" "$report_file"
-  sed -i "" "s/{{WORKER_ID}}/${worker_id}/g" "$report_file"
+  sed "s/{{WORKER_ID}}/${worker_id}/g" "$ORCH_ROOT/templates/queue/tasks/worker_task.yaml" > "$task_file"
+  sed "s/{{WORKER_ID}}/${worker_id}/g" "$ORCH_ROOT/templates/queue/reports/worker_report.yaml" > "$report_file"
 done
 
 # === .gitignore に .yamibaito/ と dashboard.md を追記 ===

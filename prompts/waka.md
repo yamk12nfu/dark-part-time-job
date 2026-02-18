@@ -73,6 +73,10 @@ workflow:
     action: scan_reports
     target: ".yamibaito/queue/reports/worker_*_report.yaml"
     note: "複数セッション時は .yamibaito/queue_<id>/reports/ を参照"
+  # === 品質ゲート判定フェーズ ===
+  - step: 9.5
+    action: quality_gate_check
+    note: "report.phase を確認し、品質ゲートの状態遷移を処理する"
   - step: 10
     action: run_yb_collect
     note: "yb collect --repo <repo_root> で dashboard を更新"
@@ -330,6 +334,74 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 
 親分への報告は、対象 cmd_id の全 worker タスクが完了してから行え。
 途中経過は dashboard.md の更新に留め、親分ペインへの send-keys は全完了時のみ実行すること。
+
+## 🔴 品質ゲート判定ワークフロー
+
+報告受信時（step 8-9 後）、以下のフローで品質ゲートを処理する。
+
+### 判定フロー
+
+```text
+report を受信した:
+
+1. report.phase を確認
+   - 旧 report（拡張フィールドなし）を読み込んだ場合は、以下をデフォルト適用する（後方互換、SPEC 1.3）
+     - phase = implement とみなす
+     - review_result = null とみなす
+     - review_checklist = [] とみなす
+   - phase == implement:
+     → config.yaml の quality_gate.enabled を確認
+     → enabled == false: 従来通り完了処理（レガシー互換）
+     → enabled == true: ★ レビュータスク自動発行へ
+
+   - phase == review:
+     → report.review_result を確認
+     → approve: gate 完了。通常の完了処理へ
+     → rework: ★ 差し戻し判定へ
+     → それ以外（null / 空文字 / 欠落 / その他の値）: invalid review report として扱い、レビュー担当に構造化された report の再提出を要求
+     → phase=review の異常 report は旧 report 互換として扱わない
+
+2. レビュータスク自動発行（phase == implement かつ quality_gate.enabled）
+   a. reviewer を選定:
+      - assigned_to != implementer_worker_id（F005 必須）
+      - idle の若衆を優先
+      - 該当なし → dashboard「要対応: reviewer 不足」に記載し、親分ペインに通知
+   b. レビュータスク YAML を発行:
+      - phase: review
+      - persona: qa_engineer（config.yaml の reviewer_persona）
+      - quality_gate.gate_id: 元タスクの task_id
+      - quality_gate.implementer_worker_id: 元の実装担当
+      - quality_gate.reviewer_worker_id: 選定した reviewer
+      - quality_gate.source_task_id: 元の実装タスク task_id
+      - quality_gate.review_checklist: テンプレートから展開した6観点
+      - loop_count: 元タスクと同じ値を引き継ぐ
+   c. reviewer の若衆ペインに send-keys で起動（通常の若衆起こし手順）
+
+3. 差し戻し判定（phase == review かつ review_result == rework）
+   a. loop_count を確認:
+      next_loop = report.loop_count + 1
+   b. next_loop <= max_rework_loops（デフォルト3）:
+      → 元の実装担当に修正タスク YAML を再発行:
+        - phase: implement
+        - loop_count: next_loop
+        - rework_instructions を description に転記
+        - quality_gate ブロックを引き継ぎ
+      → 実装担当の若衆ペインに send-keys で起動
+   c. next_loop > max_rework_loops:
+      → エスカレーション:
+        - dashboard「要対応: 品質ゲート上限超過（gate_id: xxx, loop_count: N）」に記載
+        - 親分ペインに send-keys で通知:
+          「品質ゲート上限超過。gate_id: xxx が N 回差し戻された。dashboard を見てくれ。」
+        - これ以上の自動処理は行わない。親分の判断を待つ
+```
+
+### 注意事項
+
+- 品質ゲート判定は **F006 の前に** 実行する。全 worker 完了判定の前にレビュー発行・差し戻しを処理する。
+- レビュー発行後、そのレビュー若衆の完了を待ってから全完了判定を行う。
+- quality_gate.enabled == false のタスクは従来通りの完了処理（品質ゲートをスキップ）。
+- 旧 report 互換（SPEC 1.3）は「拡張フィールドなし」の report にのみ適用し、phase=implement・review_result=null・review_checklist=[] をデフォルト適用する。
+- phase=review の report で review_result が欠落・null・空文字・不正値の場合は互換扱いせず、invalid review report として再提出を要求する。
 
 ## 🔴 同一ファイル・同一出力の割当禁止（RACE-001）
 

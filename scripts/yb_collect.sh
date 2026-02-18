@@ -66,6 +66,10 @@ fi
 
 REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" python3 - <<'PY'
 import atexit, datetime, errno, fcntl, json, os, signal, subprocess, sys, tempfile
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 repo_root = os.environ["REPO_ROOT"]
 session_suffix = os.environ.get("SESSION_SUFFIX", "")
@@ -177,6 +181,158 @@ def read_simple_kv(path, keys):
                     data[k] = value
     return data
 
+def normalize_text(value):
+    if value is None:
+        return None
+    normalized = str(value).strip().strip('"').strip("'")
+    if not normalized or normalized.lower() == "null":
+        return None
+    return normalized
+
+def normalize_phase(value):
+    phase = normalize_text(value)
+    if not phase:
+        return "implement"
+    return phase.lower()
+
+def normalize_review_result(value):
+    result = normalize_text(value)
+    if not result:
+        return None
+    lowered = result.lower()
+    return lowered if lowered in ("approve", "rework") else None
+
+def normalize_enabled_snapshot(value, default=True):
+    normalized = normalize_text(value)
+    if normalized is None:
+        return default
+    lowered = normalized.lower()
+    if lowered in ("true", "yes", "1", "on"):
+        return True
+    if lowered in ("false", "no", "0", "off"):
+        return False
+    return default
+
+def parse_non_negative_int(value, default=0):
+    try:
+        parsed = int(str(value).strip())
+        if parsed >= 0:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return default
+
+def parse_yaml_list_block(path, key):
+    items = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return items
+
+    in_block = False
+    base_indent = 0
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        if not in_block:
+            if stripped == f"{key}:":
+                in_block = True
+                base_indent = indent
+            continue
+
+        if stripped and indent <= base_indent:
+            break
+        if stripped.startswith("- "):
+            item = normalize_text(stripped[2:])
+            if item:
+                items.append(item)
+
+    return items
+
+def parse_review_checklist_block(path):
+    items = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return items
+
+    in_block = False
+    base_indent = 0
+    current = None
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        if not in_block:
+            if stripped == "review_checklist:":
+                in_block = True
+                base_indent = indent
+            continue
+
+        if stripped and indent <= base_indent:
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- "):
+            if current:
+                items.append(current)
+            current = {}
+            inline_kv = stripped[2:].strip()
+            if ":" in inline_kv:
+                k, v = inline_kv.split(":", 1)
+                current[k.strip()] = normalize_text(v)
+            continue
+        if current is not None and ":" in stripped:
+            k, v = stripped.split(":", 1)
+            current[k.strip()] = normalize_text(v)
+
+    if current:
+        items.append(current)
+    return items
+
+def load_report_payload(path):
+    if yaml is None:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = yaml.safe_load(f) or {}
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    report_payload = payload.get("report", payload)
+    return report_payload if isinstance(report_payload, dict) else None
+
+def infer_gate_id(report):
+    direct_gate_id = normalize_text(report.get("gate_id"))
+    if direct_gate_id:
+        return direct_gate_id
+    review_target = normalize_text(report.get("review_target_task_id"))
+    if review_target:
+        return review_target
+    task_id = normalize_text(report.get("task_id"))
+    if not task_id:
+        return "unknown"
+    if "_R" in task_id:
+        prefix = task_id.split("_R", 1)[0]
+        if prefix:
+            return prefix
+    return task_id
+
+def summarize_rework_instructions(instructions, limit=100):
+    if not instructions:
+        return "修正指示なし"
+    summary = " / ".join(instructions)
+    summary = " ".join(summary.split())
+    if len(summary) > limit:
+        return summary[:limit - 3] + "..."
+    return summary
+
 def list_files(dir_path, suffix):
     if not os.path.isdir(dir_path):
         return []
@@ -221,12 +377,15 @@ def atomic_write_json(path, payload):
         sys.exit(1)
 
 worker_count = 3
+max_rework_loops = 3
 if os.path.exists(config_file):
     with open(config_file, "r", encoding="utf-8") as f:
         for line in f:
-            if line.strip().startswith("codex_count:"):
-                worker_count = int(line.split(":", 1)[1].strip())
-                break
+            stripped = line.strip()
+            if stripped.startswith("codex_count:"):
+                worker_count = int(stripped.split(":", 1)[1].strip())
+            elif stripped.startswith("max_rework_loops:"):
+                max_rework_loops = parse_non_negative_int(stripped.split(":", 1)[1], 3)
 
 tasks = []
 idle_workers = []
@@ -270,30 +429,89 @@ if task_candidates:
     )
 
 reports = []
+report_keys = [
+    "worker_id",
+    "task_id",
+    "parent_cmd_id",
+    "finished_at",
+    "status",
+    "summary",
+    "notes",
+    "persona",
+    "phase",
+    "loop_count",
+    "review_result",
+    "review_target_task_id",
+    "gate_id",
+    "enabled_snapshot",
+    "skill_candidate_found",
+    "skill_candidate_name",
+    "skill_candidate_description",
+    "skill_candidate_reason",
+]
 for report_path in list_files(reports_dir, "_report.yaml"):
-    report = read_simple_kv(report_path, [
-        "worker_id",
-        "task_id",
-        "parent_cmd_id",
-        "finished_at",
-        "status",
-        "summary",
-        "notes",
-        "persona",
-        "skill_candidate_found",
-        "skill_candidate_name",
-        "skill_candidate_description",
-        "skill_candidate_reason",
-    ])
+    report = read_simple_kv(report_path, report_keys)
+    report_payload = load_report_payload(report_path)
+    if isinstance(report_payload, dict):
+        for key in report_keys:
+            if key in report_payload and report_payload[key] is not None:
+                report[key] = report_payload[key]
+        checklist = report_payload.get("review_checklist")
+        if isinstance(checklist, list):
+            report["review_checklist_items"] = [item for item in checklist if isinstance(item, dict)]
+        else:
+            report["review_checklist_items"] = []
+        raw_instructions = report_payload.get("rework_instructions")
+        if isinstance(raw_instructions, list):
+            report["rework_instructions_items"] = [item for item in (normalize_text(v) for v in raw_instructions) if item]
+        else:
+            report["rework_instructions_items"] = []
+        quality_gate_payload = report_payload.get("quality_gate")
+        if isinstance(quality_gate_payload, dict) and quality_gate_payload.get("enabled_snapshot") is not None:
+            report["enabled_snapshot"] = quality_gate_payload.get("enabled_snapshot")
+        report["has_quality_gate_fields"] = any(
+            k in report_payload
+            for k in ("phase", "loop_count", "review_result", "review_checklist", "rework_instructions", "review_target_task_id", "gate_id")
+        )
+    else:
+        report["review_checklist_items"] = []
+        report["rework_instructions_items"] = []
+        report["has_quality_gate_fields"] = False
+
+    if not report["review_checklist_items"]:
+        report["review_checklist_items"] = parse_review_checklist_block(report_path)
+    if not report["rework_instructions_items"]:
+        report["rework_instructions_items"] = parse_yaml_list_block(report_path, "rework_instructions")
+
+    report["phase"] = normalize_phase(report.get("phase"))
+    report["loop_count"] = parse_non_negative_int(report.get("loop_count"), 0)
+    report["review_result"] = normalize_review_result(report.get("review_result"))
+    report["enabled_snapshot"] = normalize_enabled_snapshot(report.get("enabled_snapshot"), True)
+    if not report["has_quality_gate_fields"]:
+        report["has_quality_gate_fields"] = bool(
+            report["review_checklist_items"]
+            or report["rework_instructions_items"]
+            or report["review_result"] is not None
+            or normalize_text(report.get("review_target_task_id"))
+            or normalize_text(report.get("gate_id"))
+            or report["loop_count"] > 0
+            or report["phase"] == "review"
+        )
     report["path"] = report_path
     reports.append(report)
 
 attention = []
 done = []
 skill_candidates = []
+quality_gate_summary = {"review_waiting": 0, "approve": 0, "rework": 0, "escalation": 0}
+review_checklist_counts = {}
+implemented_gate_ids = set()
+reviewed_gate_ids = set()
+quality_gate_rework_lines = []
+quality_gate_escalation_lines = []
 completed_worker_ids = set()  # 完了した若衆のID（タスクファイルリセット用）
 for r in reports:
-    status = (r.get("status") or "").lower()
+    status = str(r.get("status") or "").lower()
     notes = r.get("notes")
     if status in ("blocked", "failed") or (notes and notes not in ("null", "")):
         attention.append(r)
@@ -303,9 +521,46 @@ for r in reports:
         worker_id = r.get("worker_id")
         if worker_id:
             completed_worker_ids.add(worker_id)
-    found = (r.get("skill_candidate_found") or "").lower() == "true"
+    found = str(r.get("skill_candidate_found") or "").lower() == "true"
     if found and r.get("skill_candidate_name"):
         skill_candidates.append(r)
+
+    gate_id = infer_gate_id(r)
+    if (
+        status in completion_statuses
+        and r.get("phase") == "implement"
+        and r.get("has_quality_gate_fields")
+        and r.get("enabled_snapshot")
+    ):
+        implemented_gate_ids.add(gate_id)
+
+    for checklist_item in r.get("review_checklist_items", []):
+        if not isinstance(checklist_item, dict):
+            continue
+        item_id = normalize_text(checklist_item.get("item_id")) or "unknown"
+        result = (normalize_text(checklist_item.get("result")) or "").lower()
+        if result not in ("ok", "ng"):
+            continue
+        item_counter = review_checklist_counts.setdefault(item_id, {"ok": 0, "ng": 0})
+        item_counter[result] += 1
+
+    review_result = r.get("review_result")
+    loop_count = parse_non_negative_int(r.get("loop_count"), 0)
+    if r.get("phase") == "review":
+        if review_result == "approve":
+            quality_gate_summary["approve"] += 1
+            reviewed_gate_ids.add(gate_id)
+        elif review_result == "rework":
+            quality_gate_summary["rework"] += 1
+            reviewed_gate_ids.add(gate_id)
+            quality_gate_rework_lines.append(
+                f"- [{gate_id}] rework (loop {loop_count}): {summarize_rework_instructions(r.get('rework_instructions_items') or [])}"
+            )
+            if loop_count >= max_rework_loops:
+                quality_gate_summary["escalation"] += 1
+                quality_gate_escalation_lines.append(f"- [{gate_id}] エスカレーション: {loop_count}回差し戻し上限超過")
+
+quality_gate_summary["review_waiting"] = len(implemented_gate_ids - reviewed_gate_ids)
 
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 plan_root = os.path.join(work_dir, ".yamibaito", "plan")
@@ -443,12 +698,33 @@ if latest_plan_dir:
             lines.append(f"- ⚠️ 未割当 {unassigned}件")
     lines.append("")
 
+lines.append("## 品質ゲート")
+lines.append("| 状態 | 件数 |")
+lines.append("|---|---|")
+lines.append(f"| レビュー待ち | {quality_gate_summary['review_waiting']} |")
+lines.append(f"| approve | {quality_gate_summary['approve']} |")
+lines.append(f"| rework | {quality_gate_summary['rework']} |")
+lines.append(f"| エスカレーション | {quality_gate_summary['escalation']} |")
+if review_checklist_counts:
+    lines.append("")
+    lines.append("### review_checklist 集計")
+    lines.append("| 項目 | ok | ng |")
+    lines.append("|---|---:|---:|")
+    for item_id in sorted(review_checklist_counts):
+        counts = review_checklist_counts[item_id]
+        lines.append(f"| {item_id} | {counts['ok']} | {counts['ng']} |")
+lines.append("")
+
 lines.append("## 🚨 親分の裁き待ち（判断が必要）")
-if attention:
-    for r in attention:
-        notes = r.get("notes")
-        line = f"- {r.get('task_id')} ({r.get('status')}) {notes or ''}".strip()
-        lines.append(line)
+attention_lines = []
+for r in attention:
+    notes = r.get("notes")
+    line = f"- {r.get('task_id')} ({r.get('status')}) {notes or ''}".strip()
+    attention_lines.append(line)
+attention_lines.extend(quality_gate_rework_lines)
+attention_lines.extend(quality_gate_escalation_lines)
+if attention_lines:
+    lines.extend(attention_lines)
 else:
     lines.append("なし")
 lines.append("")

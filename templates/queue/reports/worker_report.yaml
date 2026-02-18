@@ -10,6 +10,25 @@ report:
   shared_files_touched: []
   notes: null
   persona: ""
+  # --- 品質ゲート拡張（QG-003）---
+  phase: implement               # implement | review
+  loop_count: 0
+  review_result: null             # approve | rework | null
+  review_target_task_id: null     # レビュー対象の元タスクID
+
+  review_checklist: []
+  # phase: review 完了時に以下の形式で記載:
+  #   - item_id: security_alignment
+  #     result: ok               # ok | ng
+  #     comment: ""
+  #   - item_id: error_retry_timeout
+  #     result: ok
+  #     comment: ""
+  #   ...（6項目）
+
+  rework_instructions: []
+  # review_result: rework の場合、修正指示を記載:
+  #   - "security_alignment: API入力を allowlist で検証すること"
   skill_candidate_found: false
   skill_candidate_name: ""
   skill_candidate_description: ""

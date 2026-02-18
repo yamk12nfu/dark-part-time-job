@@ -10,6 +10,19 @@ task:
   description: ""
   repo_root: "."
   persona: ""
+  # --- 品質ゲート拡張（QG-002）---
+  phase: implement            # implement | review
+  loop_count: 0               # int >= 0
+
+  quality_gate:
+    enabled_snapshot: true    # bool: タスク発行時の設定スナップショット
+    gate_id: null             # 実装〜レビュー〜差し戻しを束ねるID
+    implementer_worker_id: null
+    reviewer_worker_id: null
+    source_task_id: null      # review/rework時は元タスクID
+    max_loop_count: 3
+    checklist_template: ".yamibaito/templates/review-checklist.yaml"
+    review_checklist: []      # phase: review で展開済みチェックリストを格納
 
   constraints:
     allowed_paths: []

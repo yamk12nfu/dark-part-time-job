@@ -1,0 +1,20 @@
+schema_version: 1
+review_checklist:
+  - item_id: security_alignment
+    title: "セキュリティ整合"
+    description: "認可・認証・入力検証・秘密情報取り扱いの妥当性"
+  - item_id: error_retry_timeout
+    title: "エラー/リトライ/タイムアウト"
+    description: "失敗時の復旧方針、再試行制御、タイムアウト設定"
+  - item_id: observability
+    title: "可観測性"
+    description: "ログ/メトリクス/トレースと障害切り分け可能性"
+  - item_id: test_strategy
+    title: "テスト戦略"
+    description: "正常系/異常系/回帰のテスト網羅と実行可能性"
+  - item_id: acceptance_criteria_fit
+    title: "受け入れ条件"
+    description: "PRD/SPEC の受入基準を満たすか"
+  - item_id: requirement_coverage
+    title: "要件抜け漏れ"
+    description: "要求仕様・制約・非機能要件の取りこぼし有無"

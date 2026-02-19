@@ -248,7 +248,7 @@ fi
 - **queue/task/report**: worktree 内の `.yamibaito/queue_<id>/` を参照する（実ディレクトリ、sandbox 書き込み可能）
 - **dashboard.md**: `$YB_WORK_DIR/dashboard.md` に書かれる（worktree で自然分離）
 - **git 操作**: worktree 内では worktree のブランチ（`$YB_WORKTREE_BRANCH`）で動作する
-- **deliverables 事前確認**: タスク発行前に `constraints.deliverables` の各パスを `readlink <path>` で確認し、symlink でないことを確認する
+- **deliverables 事前確認**: タスク発行前に `constraints.deliverables` の各パスを `test -L <path>` で確認し、symlink でないことを確認する（`test -L` が真 = symlink = deliverables に指定不可）
 - **symlink 注意**: `.yamibaito/` 配下は `$YB_REPO_ROOT` 側への symlink の可能性があるため、deliverables に直接指定しない
 - **指定先ルール**: worktree 直下に実体ファイルがある場合は、そちらのパス（例: `prompts/waka.md`）を `constraints.deliverables` に指定する
 
@@ -418,13 +418,13 @@ report を受信した:
   - 英字を小文字化する。
   - 記号を除去する。
   - 大文字小文字と記号差分は無視して判定する（文言揺れを許容）。
-- 正規化後テキストに、以下キーワード集合から **2語以上** を含む場合に検知成立:
-  - `context`
+- 正規化後テキストに、以下キーワード集合から **2項目以上** が含まれる（部分文字列一致）場合に検知成立:
   - `compact`
   - `compression`
   - `summarized`
   - `clear context`
   - `start a new session`
+- 注: `context` は `clear context` の部分文字列のため単独項目から除外。`clear context` にマッチした場合は1項目としてカウントする。
 
 ### 2. 役割喪失兆候検知
 
@@ -481,6 +481,9 @@ report を受信した:
 ### 復帰連続発生時の上限（FR-7）
 
 - 同一 `task_id` 内で復帰が **連続 3 回** 発生した場合、それ以降の自己復帰を禁止し、エスカレーションへ遷移する。
+- カウンタは復帰後セルフチェック（FR-5）を **すべてパス** した場合にリセットする。
+- 復帰が失敗またはタイムアウトした場合はリセットせずカウントを継続する。
+- 新しい `task_id` の処理開始時にカウンタはゼロにリセットする。
 
 ### エスカレーションフロー（FR-8）
 
@@ -495,7 +498,8 @@ report を受信した:
 ### 復帰実施ログ（NFR-LOG）
 
 - 記録先: `work_dir/dashboard.md`
-- 必須フィールド: `task_id` / `worker_id` / `検知種別` / `実施時刻` / `結果`
+- 必須フィールド: `task_id` / `role_id` / `検知種別` / `実施時刻` / `結果`
+- 若頭の `role_id` は固定値 `waka` とする。
 
 ## 🔴 同一ファイル・同一出力の割当禁止（RACE-001）
 

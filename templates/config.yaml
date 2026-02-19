@@ -16,3 +16,10 @@ policies:
   tests: none
   shared_files: warn
   constraints_level: loose
+
+quality_gate:
+  enabled: true
+  max_rework_loops: 3
+  reviewer_persona: qa_engineer
+  require_different_reviewer: true
+  checklist_template_path: ".yamibaito/templates/review-checklist.yaml"

@@ -65,7 +65,7 @@ PY
 fi
 
 REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" python3 - <<'PY'
-import atexit, datetime, errno, fcntl, json, os, signal, subprocess, sys, tempfile
+import atexit, datetime, errno, fcntl, json, os, re, signal, subprocess, sys, tempfile
 try:
     import yaml
 except ImportError:
@@ -248,7 +248,7 @@ def parse_yaml_list_block(path, key):
                 base_indent = indent
             continue
 
-        if stripped and indent <= base_indent:
+        if stripped and indent < base_indent:
             break
         if stripped.startswith("- "):
             item = normalize_text(stripped[2:])
@@ -279,7 +279,7 @@ def parse_review_checklist_block(path):
                 base_indent = indent
             continue
 
-        if stripped and indent <= base_indent:
+        if stripped and indent < base_indent:
             break
         if not stripped or stripped.startswith("#"):
             continue
@@ -323,8 +323,8 @@ def infer_gate_id(report):
     task_id = normalize_text(report.get("task_id"))
     if not task_id:
         return "unknown"
-    if "_R" in task_id:
-        prefix = task_id.split("_R", 1)[0]
+    if re.search(r"_R\d+$", task_id):
+        prefix = re.sub(r"_R\d+$", "", task_id)
         if prefix:
             return prefix
     return task_id
@@ -559,12 +559,12 @@ for r in reports:
             quality_gate_summary["approve"] += 1
             reviewed_gate_ids.add(gate_id)
         elif review_result == "rework":
-            quality_gate_summary["rework"] += 1
             reviewed_gate_ids.add(gate_id)
             if loop_count >= max_rework_loops:
                 quality_gate_summary["escalation"] += 1
                 quality_gate_escalation_lines.append(f"- [{gate_id}] エスカレーション: {loop_count}回差し戻し上限超過")
             else:
+                quality_gate_summary["rework"] += 1
                 quality_gate_rework_lines.append(
                     f"- [{gate_id}] rework (loop {loop_count}): {summarize_rework_instructions(r.get('rework_instructions_items') or [])}"
                 )

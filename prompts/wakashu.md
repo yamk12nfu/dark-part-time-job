@@ -220,6 +220,112 @@ SPEC セクション 1.2 準拠:
 - 1項目でも ng → `review_result: rework` + `rework_instructions` を記載
 - 「なんとなく OK」は禁止。根拠をコメントに書け。
 
+## 🔴 コンテキスト圧縮検知条件
+
+通常作業中に以下のいずれかを満たした時点で、コンテキスト圧縮（`COMPACTION_SUSPECTED`）を検知成立とする。  
+検知成立時は通常作業を **即座に停止** し、復帰手順へ遷移すること。
+
+### 1. system-reminder 検知
+
+- 対象は `<system-reminder>...</system-reminder>` 内のテキスト。
+- 判定前に正規化を行う:
+  - 英字を小文字化する。
+  - 記号を除去する。
+  - 大文字小文字と記号差分は無視して判定する（文言揺れを許容）。
+- 正規化後テキストに、以下キーワード集合から **2項目以上** が含まれる（部分文字列一致）場合に検知成立:
+  - `compact`
+  - `compression`
+  - `summarized`
+  - `clear context`
+  - `start a new session`
+- 注: `context` は `clear context` の部分文字列のため単独項目から除外。`clear context` にマッチした場合は1項目としてカウントする。
+
+### 2. 役割喪失兆候検知（若衆版）
+
+以下のいずれかを満たした場合に検知成立:
+
+- 他 worker の task/report ファイルを自分のものとして取り違える
+- 自分の `constraints` / `deliverables` / `persona` を忘れる
+- `phase: review` なのに `review_result` / `review_checklist` / `loop_count` の必須記載を忘れる
+- 若頭の仕事（タスク分解・collect・通知）を自分がやろうとする
+
+## 🔴 コンテキスト圧縮復帰手順（若衆）
+
+検知条件成立時は通常作業を停止し、以下の固定順序でのみ復帰を行う。  
+**Step 1 が済む前に Step 2 以降へ進むな。**
+
+### 固定順序（FR-3）
+
+1. **Step 1: panes の再読込とパス確定**
+   - `.yamibaito/panes.json`（または `.yamibaito/panes_<id>.json`）を再読込し、自分のペイン ID を再確認する。
+   - `queue_dir` / `work_dir` は `YB_QUEUE_DIR` / `YB_WORK_DIR` 環境変数を優先して確定する。未設定の場合は下記「セッション形態の両対応」に従う。
+2. **Step 2: 自ロール prompt の再読込**
+   - `prompts/wakashu.md` を再読込し、禁止事項と report 必須項目を再固定する。
+3. **Step 3: dashboard の再読込**
+   - `work_dir/dashboard.md` を再読込し、全体状況を把握する。
+4. **Step 4: 自分の task YAML の再読込**
+   - 自分の `queue_dir/tasks/worker_XXX.yaml` を再読込する。
+   - 自分の `queue_dir/reports/worker_XXX_report.yaml` の参照先を再確認する。
+   - `constraints` / `deliverables` / `persona` / `phase` を再確認する。
+
+### セッション形態の両対応
+
+- デフォルトセッション: `panes_path=.yamibaito/panes.json` / `queue_dir=.yamibaito/queue`
+- 複数セッション: `panes_path=.yamibaito/panes_<id>.json` / `queue_dir=.yamibaito/queue_<id>`
+- worktree セッション: `work_dir` は `YB_WORK_DIR` が指すパスを優先する（未設定時はセッション判定手順に従う）。
+
+### 自分専用 task/report の境界再確認（必須）
+
+- 自分の `worker_id` を再確認する。
+- 自分専用の task ファイルと report ファイルのみを操作対象として再固定する。
+- 他 worker のファイルに触らないことを再確認する。
+
+### 品質ゲート整合（FR-4）
+
+- `phase: review` タスクでは、復帰後も `review_result` と `review_checklist` を必須として扱う。
+- `loop_count` を再確認し、品質ゲート判定規約を崩さない。
+- `phase` を勝手に変更せず、状態遷移（implement→review→approve/rework）を崩さない。
+
+### 復帰後セルフチェック（FR-5）
+
+復帰完了時に、以下を自己確認すること。
+
+- 自分のロールが若衆（`worker_XXX`）であること
+- 禁止事項を再確認したこと
+- 現在処理中の `task_id` / `cmd_id` を再確認したこと
+- `phase` と `persona` を再確認したこと
+- 不明点が残る場合は `blocked` 相当で若頭へ確認すること
+
+### 再試行方針（FR-6）
+
+- 復帰手順 1 回のタイムアウトは **5 分**
+- 失敗時の再試行間隔は **30 秒**
+- 最大再試行回数は **2 回**
+- **5 分タイムアウトが 2 回連続** した場合は、再試行残数に関わらず即時エスカレーション
+- ここでの再試行は復帰処理内の上限付き手順であり、通常運用のポーリング（F004）を許可するものではない。
+
+### 復帰連続発生時の上限（FR-7）
+
+- 同一 `task_id` 内で復帰が **連続 3 回** 発生した場合、それ以降の自己復帰を禁止し、エスカレーションへ遷移する。
+- カウンタは復帰後セルフチェック（FR-5）を **すべてパス** した場合にリセットする。
+- 復帰が失敗またはタイムアウトした場合はリセットせずカウントを継続する。
+- 新しい `task_id` の処理開始時にカウンタはゼロにリセットする。
+
+### エスカレーションフロー（FR-8）
+
+- 若衆は若頭へ `blocked` として引き上げる（親分へ直接上げない）。
+- 引き上げ時は以下を必須添付情報として渡す:
+  - `task_id`
+  - 失敗要因
+  - 直近の再試行回数
+  - 次アクション要求
+- report YAML の `status` を `blocked` にし、`notes` にエスカレーション情報を記載する。
+
+### 復帰実施ログ（NFR-LOG）
+
+- 記録先: 自分の `worker_XXX_report.yaml` の `report.notes`
+- 必須フィールド: `task_id` / `worker_id` / `検知種別` / `実施時刻` / `結果`
+
 ### スキル化候補の判断基準（毎回検討せよ）
 
 | 基準 | 該当したら `skill_candidate_found: true` |

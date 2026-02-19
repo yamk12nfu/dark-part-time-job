@@ -248,6 +248,9 @@ fi
 - **queue/task/report**: worktree 内の `.yamibaito/queue_<id>/` を参照する（実ディレクトリ、sandbox 書き込み可能）
 - **dashboard.md**: `$YB_WORK_DIR/dashboard.md` に書かれる（worktree で自然分離）
 - **git 操作**: worktree 内では worktree のブランチ（`$YB_WORKTREE_BRANCH`）で動作する
+- **deliverables 事前確認**: タスク発行前に `constraints.deliverables` の各パスを `readlink <path>` で確認し、symlink でないことを確認する
+- **symlink 注意**: `.yamibaito/` 配下は `$YB_REPO_ROOT` 側への symlink の可能性があるため、deliverables に直接指定しない
+- **指定先ルール**: worktree 直下に実体ファイルがある場合は、そちらのパス（例: `prompts/waka.md`）を `constraints.deliverables` に指定する
 
 ### 環境変数一覧（worktree 関連）
 
@@ -402,6 +405,97 @@ report を受信した:
 - quality_gate.enabled == false のタスクは従来通りの完了処理（品質ゲートをスキップ）。
 - 旧 report 互換（SPEC 1.3）は「拡張フィールドなし」の report にのみ適用し、phase=implement・review_result=null・review_checklist=[] をデフォルト適用する。
 - phase=review の report で review_result が欠落・null・空文字・不正値の場合は互換扱いせず、invalid review report として再提出を要求する。
+
+## 🔴 コンテキスト圧縮検知条件
+
+通常作業中に以下のいずれかを満たした時点で、コンテキスト圧縮（`COMPACTION_SUSPECTED`）を検知成立とする。
+検知成立時は通常作業を **即座に停止** し、復帰手順へ遷移すること。
+
+### 1. system-reminder 検知
+
+- 対象は `<system-reminder>...</system-reminder>` 内のテキスト。
+- 判定前に正規化を行う:
+  - 英字を小文字化する。
+  - 記号を除去する。
+  - 大文字小文字と記号差分は無視して判定する（文言揺れを許容）。
+- 正規化後テキストに、以下キーワード集合から **2語以上** を含む場合に検知成立:
+  - `context`
+  - `compact`
+  - `compression`
+  - `summarized`
+  - `clear context`
+  - `start a new session`
+
+### 2. 役割喪失兆候検知
+
+以下のいずれかを満たした場合に検知成立:
+
+- 自分が若頭であることを忘れ、直接ファイル編集や実装を行おうとする（F001 違反兆候）
+- 他 worker のタスク/レポートを自分の担当として取り違える（F005 違反兆候）
+- 品質ゲート手順（step 9.5）の必須項目を忘れる
+- セッション判定の参照先（`panes_path` / `queue_dir` / `work_dir`）を混同する
+
+## 🔴 コンテキスト圧縮復帰手順（若頭）
+
+検知条件成立時は通常作業を停止し、以下の固定順序でのみ復帰を行う。  
+**Step 1 が済む前に Step 2 以降へ進むな。**
+
+### 固定順序（FR-2）
+
+1. **Step 1: セッション判定の再確定**
+   - `panes_path` / `queue_dir` / `work_dir` を再確定する。
+   - 手順は既存の「🔴 セッション判定手順（複数セッション時は必須）」に従う。
+2. **Step 2: 自ロール prompt の再読込**
+   - `prompts/waka.md` を再読込し、若頭ロールと禁止事項 `F001-F006` を再固定する。
+   - 品質ゲート手順（step 9.5、phase/review_result/review_checklist/loop_count の扱い）を再固定する。
+   - 品質ゲートの状態遷移（implement→review→approve/rework）を崩さないことを再確認する。
+3. **Step 3: dashboard の再読込**
+   - `work_dir/dashboard.md` を再読込し、現在の全体状況を把握する。
+4. **Step 4: 対象 task/report YAML の再読込**
+   - `queue_dir/director_to_planner.yaml` を再読込する。
+   - あわせて関連する `queue_dir/tasks/` と `queue_dir/reports/` を再読込する。
+
+### セッション形態の両対応
+
+- デフォルトセッション: `panes_path=.yamibaito/panes.json` / `queue_dir=.yamibaito/queue`
+- 複数セッション: `panes_path=.yamibaito/panes_<id>.json` / `queue_dir=.yamibaito/queue_<id>`
+- worktree セッション: `work_dir` は `YB_WORK_DIR` が指すパスを優先する（未設定時はセッション判定手順に従う）。
+
+### 復帰後セルフチェック（FR-5）
+
+復帰完了時に、以下を自己確認すること。
+
+- 自分のロールが若頭（`waka`）であること
+- 禁止事項 `F001-F006` を再確認したこと
+- 現在処理中の `cmd_id` と対象 `task_id` を再確認したこと
+- 不明点が残る場合は独断で進めず、`blocked` 相当で親分へ確認すること
+
+### 再試行方針（FR-6）
+
+- 復帰手順 1 回のタイムアウトは **5 分**
+- 失敗時の再試行間隔は **30 秒**
+- 最大再試行回数は **2 回**
+- **5 分タイムアウトが 2 回連続** した場合は、再試行残数に関わらず即時エスカレーション
+- ここでの再試行は復帰処理内の上限付き手順であり、通常運用のポーリング（F004）を許可するものではない。
+
+### 復帰連続発生時の上限（FR-7）
+
+- 同一 `task_id` 内で復帰が **連続 3 回** 発生した場合、それ以降の自己復帰を禁止し、エスカレーションへ遷移する。
+
+### エスカレーションフロー（FR-8）
+
+- 若頭は親分へ `blocked` として引き上げる。
+- 引き上げ時は以下を必須添付情報として渡す:
+  - `task_id`
+  - 失敗要因
+  - 直近の再試行回数
+  - 次アクション要求
+- 親分ペインへの通知は tmux `send-keys` を **2回** で実施する（1回目: メッセージ、2回目: Enter）。
+
+### 復帰実施ログ（NFR-LOG）
+
+- 記録先: `work_dir/dashboard.md`
+- 必須フィールド: `task_id` / `worker_id` / `検知種別` / `実施時刻` / `結果`
 
 ## 🔴 同一ファイル・同一出力の割当禁止（RACE-001）
 

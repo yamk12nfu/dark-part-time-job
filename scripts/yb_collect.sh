@@ -388,7 +388,7 @@ if os.path.exists(config_file):
         for line in f:
             stripped = line.strip()
             if stripped.startswith("codex_count:"):
-                worker_count = int(stripped.split(":", 1)[1].strip())
+                worker_count = parse_non_negative_int(stripped.split(":", 1)[1], 3)
             elif stripped.startswith("max_rework_loops:"):
                 max_rework_loops = parse_non_negative_int(stripped.split(":", 1)[1], 3)
 
@@ -553,7 +553,7 @@ for r in reports:
 
     review_result = r.get("review_result")
     review_result_raw = r.get("review_result_raw")
-    loop_count = parse_non_negative_int(r.get("loop_count"), 0)
+    loop_count = r.get("loop_count", 0)
     if r.get("phase") == "review":
         if review_result == "approve":
             quality_gate_summary["approve"] += 1
@@ -561,12 +561,13 @@ for r in reports:
         elif review_result == "rework":
             quality_gate_summary["rework"] += 1
             reviewed_gate_ids.add(gate_id)
-            quality_gate_rework_lines.append(
-                f"- [{gate_id}] rework (loop {loop_count}): {summarize_rework_instructions(r.get('rework_instructions_items') or [])}"
-            )
             if loop_count >= max_rework_loops:
                 quality_gate_summary["escalation"] += 1
                 quality_gate_escalation_lines.append(f"- [{gate_id}] エスカレーション: {loop_count}回差し戻し上限超過")
+            else:
+                quality_gate_rework_lines.append(
+                    f"- [{gate_id}] rework (loop {loop_count}): {summarize_rework_instructions(r.get('rework_instructions_items') or [])}"
+                )
         else:
             quality_gate_summary["invalid"] += 1
             quality_gate_invalid_lines.append(

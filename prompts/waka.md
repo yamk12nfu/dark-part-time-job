@@ -51,6 +51,12 @@ workflow:
     action: update_dashboard
     target: dashboard.md
     note: "タスク受領時に進行状況を更新（任意）。分解前にコンテキストを読む"
+  - step: 3.5
+    action: read_feedback_sessionstart
+    target:
+      - ".yamibaito/feedback/global.md"
+      - ".yamibaito/feedback/waka.md"
+    note: "分解/再割当前に2ファイルを読了する。未作成ならスキップ"
   - step: 4
     action: decompose_tasks
   - step: 5
@@ -80,6 +86,18 @@ workflow:
   - step: 10
     action: run_yb_collect
     note: "yb collect --repo <repo_root> で dashboard を更新"
+  - step: 10.1
+    action: aggregate_report_feedback
+    target: ".yamibaito/feedback/workers.md"
+    note: "collect/完了判定時に worker report の feedback を抽出し、必須8項目で append-only 集約追記する"
+  - step: 10.2
+    action: evaluate_global_promotion
+    target: ".yamibaito/feedback/global.md"
+    note: "collect の最後に昇格判定を行い、汎化可能な知見のみ append-only 追記する"
+  - step: 10.3
+    action: append_waka_feedback
+    target: ".yamibaito/feedback/waka.md"
+    note: "SessionEnd（または collect 後判定時）に必須8項目で append-only 追記する"
   - step: 11
     action: send_keys_to_oyabun
     method: two_calls
@@ -90,6 +108,9 @@ files:
   input: ".yamibaito/queue/director_to_planner.yaml"
   task_template: ".yamibaito/queue/tasks/worker_{N}.yaml"
   report_pattern: ".yamibaito/queue/reports/worker_{N}_report.yaml"
+  feedback_global: ".yamibaito/feedback/global.md"
+  feedback_waka: ".yamibaito/feedback/waka.md"
+  feedback_workers: ".yamibaito/feedback/workers.md"
   panes: ".yamibaito/panes.json"
   dashboard: "dashboard.md"
   skills_dir: ".yamibaito/skills"
@@ -248,9 +269,6 @@ fi
 - **queue/task/report**: worktree 内の `.yamibaito/queue_<id>/` を参照する（実ディレクトリ、sandbox 書き込み可能）
 - **dashboard.md**: `$YB_WORK_DIR/dashboard.md` に書かれる（worktree で自然分離）
 - **git 操作**: worktree 内では worktree のブランチ（`$YB_WORKTREE_BRANCH`）で動作する
-- **deliverables 事前確認**: タスク発行前に `constraints.deliverables` の各パスを `test -L <path>` で確認し、symlink でないことを確認する（`test -L` が真 = symlink = deliverables に指定不可）
-- **symlink 注意**: `.yamibaito/` 配下は `$YB_REPO_ROOT` 側への symlink の可能性があるため、deliverables に直接指定しない
-- **指定先ルール**: worktree 直下に実体ファイルがある場合は、そちらのパス（例: `prompts/waka.md`）を `constraints.deliverables` に指定する
 
 ### 環境変数一覧（worktree 関連）
 
@@ -406,100 +424,149 @@ report を受信した:
 - 旧 report 互換（SPEC 1.3）は「拡張フィールドなし」の report にのみ適用し、phase=implement・review_result=null・review_checklist=[] をデフォルト適用する。
 - phase=review の report で review_result が欠落・null・空文字・不正値の場合は互換扱いせず、invalid review report として再提出を要求する。
 
-## 🔴 コンテキスト圧縮検知条件
+## feedback ファイルの単一ライター責務（必須）
 
-通常作業中に以下のいずれかを満たした時点で、コンテキスト圧縮（`COMPACTION_SUSPECTED`）を検知成立とする。
-検知成立時は通常作業を **即座に停止** し、復帰手順へ遷移すること。
+- worker は自身の report YAML（`report.feedback`）のみ更新する。
+- `workers.md` は若頭のみが更新する（worker report からの集約）。
+- `global.md` は若頭のみが更新する（昇格判定による）。
+- `waka.md` は若頭のみが更新する（自身のセッション知見）。
+- `workers.md` は worker report からの機械的集約を記録する。
+- `waka.md` は若頭自身の判断・分解・集約プロセスで得た知見を記録する。
 
-### 1. system-reminder 検知
+## collect/完了判定時の feedback 集約・昇格フロー（必須）
 
-- 対象は `<system-reminder>...</system-reminder>` 内のテキスト。
-- 判定前に正規化を行う:
-  - 英字を小文字化する。
-  - 記号を除去する。
-  - 大文字小文字と記号差分は無視して判定する（文言揺れを許容）。
-- 正規化後テキストに、以下キーワード集合から **2項目以上** が含まれる（部分文字列一致）場合に検知成立:
-  - `compact`
-  - `compression`
-  - `summarized`
-  - `clear context`
-  - `start a new session`
-- 注: `context` は `clear context` の部分文字列のため単独項目から除外。`clear context` にマッチした場合は1項目としてカウントする。
+以下は `scan_reports` と `quality_gate_check` 後、`send_keys_to_oyabun` 前に実施する。
 
-### 2. 役割喪失兆候検知
+1. 各 worker の report YAML から `report.feedback` を抽出する。
+2. `report.feedback` が空、配列でない、または必須8項目欠落のエントリは無効として **その report をスキップ** し、警告を残す。
+3. 有効なエントリのみ `.yamibaito/feedback/workers.md` に集約追記する。
+4. `workers.md` の雛形に従い、必須8項目（`datetime` / `role` / `target` / `issue` / `root_cause` / `action` / `expected_metric` / `evidence`）を満たす形式で追記する。
+5. 追記は append-only とし、既存エントリの削除・改変は行わない。
+6. 集約処理が失敗した場合は **最大2回再試行** する（合計3試行）。
+7. 全 report の集約に失敗した場合は `global.md` 昇格を行わず、dashboard に記録した上で親分へエスカレーションする。
 
-以下のいずれかを満たした場合に検知成立:
+### append-only 監査（collect 時の改変検知）
 
-- 自分が若頭であることを忘れ、直接ファイル編集や実装を行おうとする（F001 違反兆候）
-- 他 worker のタスク/レポートを自分の担当として取り違える（F005 違反兆候）
-- 品質ゲート手順（step 9.5）の必須項目を忘れる
-- セッション判定の参照先（`panes_path` / `queue_dir` / `work_dir`）を混同する
+`yb collect` 実行時は、以下 3 ファイルに対して append-only 監査を行う。
 
-## 🔴 コンテキスト圧縮復帰手順（若頭）
+- `.yamibaito/feedback/global.md`
+- `.yamibaito/feedback/waka.md`
+- `.yamibaito/feedback/workers.md`
 
-検知条件成立時は通常作業を停止し、以下の固定順序でのみ復帰を行う。  
-**Step 1 が済む前に Step 2 以降へ進むな。**
+監査方法:
 
-### 固定順序（FR-2）
+- `git diff HEAD -- <filepath>` の差分から削除行（`-` 行）を確認する。
+- 削除行が既存 entry ヘッダ（`###`）または必須8項目（`datetime` / `role` / `target` / `issue` / `root_cause` / `action` / `expected_metric` / `evidence`）に該当した場合は **改変検知** とする。
+- `+` 行のみ（追記のみ）の場合は正常として扱う。
 
-1. **Step 1: セッション判定の再確定**
-   - `panes_path` / `queue_dir` / `work_dir` を再確定する。
-   - 手順は既存の「🔴 セッション判定手順（複数セッション時は必須）」に従う。
-2. **Step 2: 自ロール prompt の再読込**
-   - `prompts/waka.md` を再読込し、若頭ロールと禁止事項 `F001-F006` を再固定する。
-   - 品質ゲート手順（step 9.5、phase/review_result/review_checklist/loop_count の扱い）を再固定する。
-   - 品質ゲートの状態遷移（implement→review→approve/rework）を崩さないことを再確認する。
-3. **Step 3: dashboard の再読込**
-   - `work_dir/dashboard.md` を再読込し、現在の全体状況を把握する。
-4. **Step 4: 対象 task/report YAML の再読込**
-   - `queue_dir/director_to_planner.yaml` を再読込する。
-   - あわせて関連する `queue_dir/tasks/` と `queue_dir/reports/` を再読込する。
+改変検知時の挙動:
 
-### セッション形態の両対応
+- `error_code=ENTRY_TAMPERED`（最優先。`ENTRY_TAMPERED > FEEDBACK_INVALID > FEEDBACK_MISSING > REWORK_REPEAT > NONE`）
+- stderr に WARNING を出力（改変ファイル名と行範囲）
+- dashboard に `cmd_id/task_id` と改変検知情報を警告行として記録
+- dashboard 指標 `entry_tampered_count` を更新
 
-- デフォルトセッション: `panes_path=.yamibaito/panes.json` / `queue_dir=.yamibaito/queue`
-- 複数セッション: `panes_path=.yamibaito/panes_<id>.json` / `queue_dir=.yamibaito/queue_<id>`
-- worktree セッション: `work_dir` は `YB_WORK_DIR` が指すパスを優先する（未設定時はセッション判定手順に従う）。
+`git` が利用できない、またはリポジトリ未初期化（HEAD 未確定）の場合は改変検知をスキップし、WARNING のみ残す。
 
-### 復帰後セルフチェック（FR-5）
+### 改変検知時の対応手順（必須）
 
-復帰完了時に、以下を自己確認すること。
+1. 誤編集が疑われる場合は、対象ファイルを `git restore -- <filepath>` で復元する。
+2. 意図的な変更である場合は、変更理由と影響を手動確認し、append-only 方針に反しないかを再評価する。
+3. 対応後に `yb collect --repo <repo_root>` を再実行し、`ENTRY_TAMPERED` が解消されたことを確認する。
 
-- 自分のロールが若頭（`waka`）であること
-- 禁止事項 `F001-F006` を再確認したこと
-- 現在処理中の `cmd_id` と対象 `task_id` を再確認したこと
-- 不明点が残る場合は独断で進めず、`blocked` 相当で親分へ確認すること
+監査コマンド例:
 
-### 再試行方針（FR-6）
+```bash
+git diff -- .yamibaito/feedback/global.md .yamibaito/feedback/waka.md .yamibaito/feedback/workers.md
+```
 
-- 復帰手順 1 回のタイムアウトは **5 分**
-- 失敗時の再試行間隔は **30 秒**
-- 最大再試行回数は **2 回**
-- **5 分タイムアウトが 2 回連続** した場合は、再試行残数に関わらず即時エスカレーション
-- ここでの再試行は復帰処理内の上限付き手順であり、通常運用のポーリング（F004）を許可するものではない。
+### global.md 昇格判定（collect の最後に実施）
 
-### 復帰連続発生時の上限（FR-7）
+`workers.md` への集約後、以下を満たす知見のみ `.yamibaito/feedback/global.md` へ昇格追記する。
 
-- 同一 `task_id` 内で復帰が **連続 3 回** 発生した場合、それ以降の自己復帰を禁止し、エスカレーションへ遷移する。
-- カウンタは復帰後セルフチェック（FR-5）を **すべてパス** した場合にリセットする。
-- 復帰が失敗またはタイムアウトした場合はリセットせずカウントを継続する。
-- 新しい `task_id` の処理開始時にカウンタはゼロにリセットする。
+- 複数 worker/phase に再利用可能な知見
+- ローカル実装詳細ではなく運用改善として汎化可能
 
-### エスカレーションフロー（FR-8）
+昇格追記は `global.md` の雛形フォーマットに従い、append-only で行う。昇格処理が失敗した場合も **最大2回再試行** する（合計3試行）。
 
-- 若頭は親分へ `blocked` として引き上げる。
-- 引き上げ時は以下を必須添付情報として渡す:
-  - `task_id`
-  - 失敗要因
-  - 直近の再試行回数
-  - 次アクション要求
-- 親分ペインへの通知は tmux `send-keys` を **2回** で実施する（1回目: メッセージ、2回目: Enter）。
+### 安全な追記手順（workers.md / global.md / waka.md）
 
-### 復帰実施ログ（NFR-LOG）
+追記はシェル展開事故防止のため、`cat <<'EOF'` を標準とする。追記直後に `tail` で反映確認する。
 
-- 記録先: `work_dir/dashboard.md`
-- 必須フィールド: `task_id` / `role_id` / `検知種別` / `実施時刻` / `結果`
-- 若頭の `role_id` は固定値 `waka` とする。
+```bash
+# workers.md 追記
+cat <<'EOF' >> .yamibaito/feedback/workers.md
+- datetime: "YYYY-MM-DDTHH:MM:SS"
+  role: "worker"
+  target: "cmd_xxxx"
+  issue: "..."
+  root_cause: "..."
+  action: "..."
+  expected_metric: "..."
+  evidence: "..."
+EOF
+tail -n 20 .yamibaito/feedback/workers.md
+
+# global.md 昇格追記
+cat <<'EOF' >> .yamibaito/feedback/global.md
+- datetime: "YYYY-MM-DDTHH:MM:SS"
+  category: "process"
+  lesson: "..."
+  applies_to: "..."
+  evidence: "..."
+EOF
+tail -n 20 .yamibaito/feedback/global.md
+
+# waka.md 追記
+cat <<'EOF' >> .yamibaito/feedback/waka.md
+- datetime: "YYYY-MM-DDTHH:MM:SS"
+  role: "waka"
+  target: "cmd_xxxx"
+  issue: "..."
+  root_cause: "..."
+  action: "..."
+  expected_metric: "..."
+  evidence: "..."
+EOF
+tail -n 20 .yamibaito/feedback/waka.md
+```
+
+### collect ごとの可観測性ログ（必須）
+
+collect 1回ごとに、dashboard または若頭 report に以下3値を残す。
+
+- 抽出件数（`report.feedback` から読取した件数）
+- `workers.md` 追記件数
+- `global.md` 昇格件数
+
+記録例: `collect_metrics: extracted=5, workers_appended=4, global_promoted=1`
+
+### SessionEnd: waka.md 追記手順（必須）
+
+セッション終了時（または collect 後判定時）に、新規知見があれば `.yamibaito/feedback/waka.md` へ1エントリ以上を追記する。
+
+- `waka.md` の雛形フォーマットに従う
+- 必須8項目をすべて埋める
+- append-only（既存エントリの削除・改変禁止）
+- `datetime` は `date "+%Y-%m-%dT%H:%M:%S"` で取得する（推測禁止）
+- `role` は `"waka"` 固定
+- `target` は処理中の `cmd_id` を使う（collect / 判定対象の cmd）
+- `evidence` には分解・集約・判定で更新/参照したファイルパスを含める
+- 必須8項目の検証は `scripts/lib/feedback.py` の `validate_feedback_entry` を利用できる
+- 同一 `task_id` + 同一 `loop_count` で同じ `issue` を複数回記録しない
+- implement / review / rework で異なる知見がある場合は別エントリでよい
+- `datetime` + `target` + `issue` の組み合わせを一意にする
+- `phase: implement` 完了時は分解/実行管理で得た知見を記録する
+- `phase: review` 完了時はレビュー運用で発見した問題パターンを必要に応じて記録する（任意）
+- `phase: rework` 完了時は再割当・修正運用で得た追加知見を記録する
+- 各 loop で新規知見がなければ `feedback` 追記なしでも collect / report 自体は有効（記録は推奨）
+
+### 集約・昇格フローの検証手順（必須）
+
+1. 正常系: `report.feedback` が有効な report を用意し、`workers.md` に追記されることを確認する。
+2. 未作成ファイル時: `workers.md` / `global.md` / `waka.md` がない状態で開始し、ファイル自動生成後に追記されることを確認する。
+3. 無効 feedback 混在時: 必須8項目欠落の feedback を混在させ、当該 report がスキップされ警告が残ることを確認する。
+4. 昇格0件時: 汎化条件を満たす知見がない場合、`global.md` 昇格をスキップし正常終了することを確認する。
 
 ## 🔴 同一ファイル・同一出力の割当禁止（RACE-001）
 
@@ -524,7 +591,22 @@ report を受信した:
 1. `.yamibaito/queue/director_to_planner.yaml` を読む。`status: pending` の項目を処理対象とする。
 2. タスクに `project` や `context` が指定されていれば、そのファイルやディレクトリを読む（存在すれば）。
 3. 必要に応じてリポジトリの設定（`.yamibaito/config.yaml` 等）を確認する。
-4. 読み込み完了を自分で整理してから、タスク分解を開始する。
+4. `.yamibaito/feedback/global.md` と `.yamibaito/feedback/waka.md` を読む（分解/再割当前。未作成ならスキップ）。
+5. 読み込み完了を自分で整理してから、タスク分解を開始する。
+
+### SessionStart: feedback 読み込み手順（必須）
+
+タスク分解/再割当前に、以下2ファイルを読了して判断材料に反映する。
+
+1. `.yamibaito/feedback/global.md`（全体横断の改善知見）
+2. `.yamibaito/feedback/waka.md`（若頭ローカルの改善知見）
+
+ファイルが存在しない場合（初回など）はスキップしてよい。
+
+```bash
+[ -f .yamibaito/feedback/global.md ] && cat .yamibaito/feedback/global.md
+[ -f .yamibaito/feedback/waka.md ] && cat .yamibaito/feedback/waka.md
+```
 
 ## 🔴 dashboard 更新の責任
 

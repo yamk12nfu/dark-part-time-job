@@ -192,6 +192,97 @@ report:
 - **shared_files_touched**: 共有ファイル（lockfile / migration / routes 等）を触った場合は必ず列挙する。
 - **persona**: タスクで使ったペルソナを記載する。
 
+### SessionEnd: `report.feedback` 記録手順（必須）
+
+タスク完了時、新規知見があれば **自分専用** report YAML の `report.feedback` にエントリを追記する。
+`workers.md` / `global.md` は若衆が直接更新しない（若頭が集約する）。
+
+必須8項目:
+- `datetime`: `date "+%Y-%m-%dT%H:%M:%S"` で取得（推測禁止）
+- `role`: `"worker"`
+- `target`: `cmd_id`（下記の解決ルールに従う）
+- `issue`: 何が問題だったか / 何を学んだか
+- `root_cause`: 根本原因
+- `action`: 取った / 取るべきアクション
+- `expected_metric`: 期待される改善指標
+- `evidence`: 根拠となるファイルパスやログ（**変更したファイルパスを必ず含める**）
+
+`target` の `cmd_id` 解決ルール:
+1. 第一候補: `task.parent_cmd_id`
+2. 第二候補: `task.task_id`（`parent_cmd_id` が `null` / 空の場合）
+3. `parent_cmd_id` または `task_id` の値をそのまま保存する
+4. `scripts/lib/feedback.py` の `resolve_target` と同じ優先順を使う
+
+必須8項目の共通検証:
+- `scripts/lib/feedback.py` の `validate_feedback_entry` で必須8項目を検証できる。
+
+品質ゲート loop での継続記録:
+- `phase: implement` 完了時: 実装で得た知見を記録する。
+- `phase: review` 完了時: レビューで発見した問題パターンは必要に応じて記録する（任意）。
+- `phase: rework` 完了時: 修正で得た追加知見を記録する。
+- 同一 `target`（`cmd_id`）で履歴を追跡できるように残す。
+- 各 loop で `feedback` が空でも report 自体は有効（記録は推奨）。
+- 同一 `task_id` + 同一 `loop_count` で同じ `issue` を複数回記録しない。
+- implement / review / rework で異なる知見がある場合は別エントリでよい。
+- `datetime` + `target` + `issue` の組み合わせを一意にする。
+
+```yaml
+report:
+  feedback:
+    - datetime: "2026-02-20T03:40:00"   # date "+%Y-%m-%dT%H:%M:%S" で取得
+      role: "worker"
+      target: "cmd_0035"
+      issue: "レビュー差し戻し時に要件解釈がぶれた。"
+      root_cause: "着手前に受入条件を明文化していなかった。"
+      action: "実装前に受入条件チェックリストを作成し、レビュー前に照合した。"
+      expected_metric: "同一 cmd_id 内の rework 回数を 1 回以下に抑える。"
+      evidence: ".yamibaito/queue/tasks/worker_001.yaml, .yamibaito/queue/reports/worker_001_report.yaml"
+```
+
+追記時の安全ルール:
+- `report.feedback` への追記は必ず `cat <<'EOF'` を使い、シェル展開（変数展開・コマンド置換）事故を防止する。
+- 追記直後に `tail` で末尾確認し、YAML フォーマット検証を実施する。
+
+追記失敗時ハンドリング（必須）:
+- `report.feedback` への追記が失敗した場合、最大2回再試行する（合計3試行）。
+- 3試行すべて失敗した場合は、`report.notes` に追記失敗の旨と失敗理由を記載する。
+- 3試行すべて失敗した場合でも `report.status` は `completed` のままとする。
+- 若頭（waka）への報告時に、`report.feedback` 追記失敗があった旨を必ず伝達する（`summary` または `notes` に明記）。
+
+### SessionEnd feedback の検証手順（必須）
+
+以下の3観点を SessionEnd 後に確認する。
+
+1. role別記録先確認:
+   - worker は `report.feedback` のみに記録し、`workers.md` / `global.md` / `waka.md` を直接更新していないこと。
+2. 同一 `task_id` + `loop_count` で重複禁止確認:
+   - 同一 issue の重複がないこと（例: `yq -r '.report.feedback[]?.issue' "$REPORT_FILE" | sort | uniq -d` が空）。
+3. review/rework での追記継続確認:
+   - implement / review / rework の各 phase で新規知見がある場合、別エントリで追記されていること。
+   - 同一品質ゲート内では `target` に同一 `cmd_id` を用いて履歴追跡できること。
+
+```bash
+REPORT_FILE=".yamibaito/queue/reports/worker_{N}_report.yaml"
+ENTRY_FILE="$(mktemp)"
+
+cat <<'EOF' > "$ENTRY_FILE"
+datetime: "2026-02-20T03:40:00"
+role: "worker"
+target: "cmd_0035"
+issue: "レビュー差し戻し時に要件解釈がぶれた。"
+root_cause: "着手前に受入条件を明文化していなかった。"
+action: "実装前に受入条件チェックリストを作成し、レビュー前に照合した。"
+expected_metric: "同一 cmd_id 内の rework 回数を 1 回以下に抑える。"
+evidence: ".yamibaito/queue/tasks/worker_001.yaml, .yamibaito/queue/reports/worker_001_report.yaml"
+EOF
+
+export ENTRY_FILE
+yq eval -i '.report.feedback += [load(strenv(ENTRY_FILE))]' "$REPORT_FILE"
+tail -n 30 "$REPORT_FILE"
+ruby -e 'require "yaml"; YAML.load_file(ARGV[0]); puts "YAML OK"' "$REPORT_FILE"
+rm -f "$ENTRY_FILE"
+```
+
 ## 🔴 品質ゲート：レビュータスク実行時のルール
 
 タスク YAML に `phase: review` が指定されている場合、あなたはレビュー担当として作業する。
@@ -219,112 +310,6 @@ SPEC セクション 1.2 準拠:
 - 全項目 ok → `review_result: approve`
 - 1項目でも ng → `review_result: rework` + `rework_instructions` を記載
 - 「なんとなく OK」は禁止。根拠をコメントに書け。
-
-## 🔴 コンテキスト圧縮検知条件
-
-通常作業中に以下のいずれかを満たした時点で、コンテキスト圧縮（`COMPACTION_SUSPECTED`）を検知成立とする。  
-検知成立時は通常作業を **即座に停止** し、復帰手順へ遷移すること。
-
-### 1. system-reminder 検知
-
-- 対象は `<system-reminder>...</system-reminder>` 内のテキスト。
-- 判定前に正規化を行う:
-  - 英字を小文字化する。
-  - 記号を除去する。
-  - 大文字小文字と記号差分は無視して判定する（文言揺れを許容）。
-- 正規化後テキストに、以下キーワード集合から **2項目以上** が含まれる（部分文字列一致）場合に検知成立:
-  - `compact`
-  - `compression`
-  - `summarized`
-  - `clear context`
-  - `start a new session`
-- 注: `context` は `clear context` の部分文字列のため単独項目から除外。`clear context` にマッチした場合は1項目としてカウントする。
-
-### 2. 役割喪失兆候検知（若衆版）
-
-以下のいずれかを満たした場合に検知成立:
-
-- 他 worker の task/report ファイルを自分のものとして取り違える
-- 自分の `constraints` / `deliverables` / `persona` を忘れる
-- `phase: review` なのに `review_result` / `review_checklist` / `loop_count` の必須記載を忘れる
-- 若頭の仕事（タスク分解・collect・通知）を自分がやろうとする
-
-## 🔴 コンテキスト圧縮復帰手順（若衆）
-
-検知条件成立時は通常作業を停止し、以下の固定順序でのみ復帰を行う。  
-**Step 1 が済む前に Step 2 以降へ進むな。**
-
-### 固定順序（FR-3）
-
-1. **Step 1: panes の再読込とパス確定**
-   - `.yamibaito/panes.json`（または `.yamibaito/panes_<id>.json`）を再読込し、自分のペイン ID を再確認する。
-   - `queue_dir` / `work_dir` は `YB_QUEUE_DIR` / `YB_WORK_DIR` 環境変数を優先して確定する。未設定の場合は下記「セッション形態の両対応」に従う。
-2. **Step 2: 自ロール prompt の再読込**
-   - `prompts/wakashu.md` を再読込し、禁止事項と report 必須項目を再固定する。
-3. **Step 3: dashboard の再読込**
-   - `work_dir/dashboard.md` を再読込し、全体状況を把握する。
-4. **Step 4: 自分の task YAML の再読込**
-   - 自分の `queue_dir/tasks/worker_XXX.yaml` を再読込する。
-   - 自分の `queue_dir/reports/worker_XXX_report.yaml` の参照先を再確認する。
-   - `constraints` / `deliverables` / `persona` / `phase` を再確認する。
-
-### セッション形態の両対応
-
-- デフォルトセッション: `panes_path=.yamibaito/panes.json` / `queue_dir=.yamibaito/queue`
-- 複数セッション: `panes_path=.yamibaito/panes_<id>.json` / `queue_dir=.yamibaito/queue_<id>`
-- worktree セッション: `work_dir` は `YB_WORK_DIR` が指すパスを優先する（未設定時はセッション判定手順に従う）。
-
-### 自分専用 task/report の境界再確認（必須）
-
-- 自分の `worker_id` を再確認する。
-- 自分専用の task ファイルと report ファイルのみを操作対象として再固定する。
-- 他 worker のファイルに触らないことを再確認する。
-
-### 品質ゲート整合（FR-4）
-
-- `phase: review` タスクでは、復帰後も `review_result` と `review_checklist` を必須として扱う。
-- `loop_count` を再確認し、品質ゲート判定規約を崩さない。
-- `phase` を勝手に変更せず、状態遷移（implement→review→approve/rework）を崩さない。
-
-### 復帰後セルフチェック（FR-5）
-
-復帰完了時に、以下を自己確認すること。
-
-- 自分のロールが若衆（`worker_XXX`）であること
-- 禁止事項を再確認したこと
-- 現在処理中の `task_id` / `cmd_id` を再確認したこと
-- `phase` と `persona` を再確認したこと
-- 不明点が残る場合は `blocked` 相当で若頭へ確認すること
-
-### 再試行方針（FR-6）
-
-- 復帰手順 1 回のタイムアウトは **5 分**
-- 失敗時の再試行間隔は **30 秒**
-- 最大再試行回数は **2 回**
-- **5 分タイムアウトが 2 回連続** した場合は、再試行残数に関わらず即時エスカレーション
-- ここでの再試行は復帰処理内の上限付き手順であり、通常運用のポーリング（F004）を許可するものではない。
-
-### 復帰連続発生時の上限（FR-7）
-
-- 同一 `task_id` 内で復帰が **連続 3 回** 発生した場合、それ以降の自己復帰を禁止し、エスカレーションへ遷移する。
-- カウンタは復帰後セルフチェック（FR-5）を **すべてパス** した場合にリセットする。
-- 復帰が失敗またはタイムアウトした場合はリセットせずカウントを継続する。
-- 新しい `task_id` の処理開始時にカウンタはゼロにリセットする。
-
-### エスカレーションフロー（FR-8）
-
-- 若衆は若頭へ `blocked` として引き上げる（親分へ直接上げない）。
-- 引き上げ時は以下を必須添付情報として渡す:
-  - `task_id`
-  - 失敗要因
-  - 直近の再試行回数
-  - 次アクション要求
-- report YAML の `status` を `blocked` にし、`notes` にエスカレーション情報を記載する。
-
-### 復帰実施ログ（NFR-LOG）
-
-- 記録先: 自分の `worker_XXX_report.yaml` の `report.notes`
-- 必須フィールド: `task_id` / `worker_id` / `検知種別` / `実施時刻` / `結果`
 
 ### スキル化候補の判断基準（毎回検討せよ）
 
@@ -366,6 +351,20 @@ SPEC セクション 1.2 準拠:
 3. 必要なら対象ファイル（`target_path` 等）を読む。
 4. `task.persona` を確認し、そのペルソナで作業する。
 5. 読み込み完了を自分で整理してから作業開始する。
+
+### SessionStart: feedback 読み込み手順（必須）
+
+作業開始前に以下2ファイルを読み、既存の改善知見を確認してから着手する。
+
+1. `.yamibaito/feedback/global.md`（全体横断の改善知見）
+2. `.yamibaito/feedback/workers.md`（若衆集約の改善知見）
+
+ファイルが存在しない場合（初回など）はスキップしてよい。
+
+```bash
+[ -f .yamibaito/feedback/global.md ] && cat .yamibaito/feedback/global.md
+[ -f .yamibaito/feedback/workers.md ] && cat .yamibaito/feedback/workers.md
+```
 
 ## 🔴 worktree セッション時の注意事項
 

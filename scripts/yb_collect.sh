@@ -163,16 +163,16 @@ if [ -f "$panes_file" ]; then
     if resolved_candidate="$(run_with_timeout "$READ_TIMEOUT" resolve_work_dir_with_python)"; then
       resolved_work_dir="$resolved_candidate"
       break
+    else
+      read_status=$?
+      emit_recovery_warning \
+        "READ" \
+        "work_dir resolve failed for $panes_file (attempt $((read_attempt + 1))/$((READ_RETRY_MAX + 1)), rc=$read_status)"
+      if [ "$read_attempt" -lt "$READ_RETRY_MAX" ]; then
+        sleep "$RETRY_INTERVAL_SECONDS"
+      fi
+      read_attempt=$((read_attempt + 1))
     fi
-
-    read_status=$?
-    emit_recovery_warning \
-      "READ" \
-      "work_dir resolve failed for $panes_file (attempt $((read_attempt + 1))/$((READ_RETRY_MAX + 1)), rc=$read_status)"
-    if [ "$read_attempt" -lt "$READ_RETRY_MAX" ]; then
-      sleep "$RETRY_INTERVAL_SECONDS"
-    fi
-    read_attempt=$((read_attempt + 1))
   done
 
   if [ -n "$resolved_work_dir" ]; then
@@ -1451,16 +1451,16 @@ while [ "$collect_attempt" -le "$COLLECT_RETRY_MAX" ]; do
   if run_with_timeout "$COLLECT_TIMEOUT" run_collect_once; then
     collect_succeeded=1
     break
+  else
+    collect_status=$?
+    emit_recovery_warning \
+      "COLLECT" \
+      "collect failed (attempt $((collect_attempt + 1))/$((COLLECT_RETRY_MAX + 1)), rc=$collect_status)"
+    if [ "$collect_attempt" -lt "$COLLECT_RETRY_MAX" ]; then
+      sleep "$RETRY_INTERVAL_SECONDS"
+    fi
+    collect_attempt=$((collect_attempt + 1))
   fi
-
-  collect_status=$?
-  emit_recovery_warning \
-    "COLLECT" \
-    "collect failed (attempt $((collect_attempt + 1))/$((COLLECT_RETRY_MAX + 1)), rc=$collect_status)"
-  if [ "$collect_attempt" -lt "$COLLECT_RETRY_MAX" ]; then
-    sleep "$RETRY_INTERVAL_SECONDS"
-  fi
-  collect_attempt=$((collect_attempt + 1))
 done
 
 if [ "$collect_succeeded" -ne 1 ]; then

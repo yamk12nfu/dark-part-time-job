@@ -132,7 +132,7 @@ flush_recovery_warnings_to_dashboard() {
 }
 
 resolve_work_dir_with_python() {
-  PANES_FILE="$panes_file" REPO_ROOT="$repo_root" python3 - <<'PY'
+  PANES_FILE="$panes_file" REPO_ROOT="$repo_root" exec python3 - <<'PY'
 import json, os
 
 repo_root = os.environ["REPO_ROOT"]
@@ -184,7 +184,7 @@ fi
 warning_dashboard_file="$work_dir/dashboard.md"
 
 run_collect_once() {
-REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" SCRIPTS_DIR="$SCRIPTS_DIR" READ_RETRY_MAX="$READ_RETRY_MAX" READ_TIMEOUT="$READ_TIMEOUT" APPEND_RETRY_MAX="$APPEND_RETRY_MAX" APPEND_TIMEOUT="$APPEND_TIMEOUT" COLLECT_RETRY_MAX="$COLLECT_RETRY_MAX" COLLECT_TIMEOUT="$COLLECT_TIMEOUT" RETRY_INTERVAL_SECONDS="$RETRY_INTERVAL_SECONDS" python3 - <<'PY'
+REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" SCRIPTS_DIR="$SCRIPTS_DIR" READ_RETRY_MAX="$READ_RETRY_MAX" READ_TIMEOUT="$READ_TIMEOUT" APPEND_RETRY_MAX="$APPEND_RETRY_MAX" APPEND_TIMEOUT="$APPEND_TIMEOUT" COLLECT_RETRY_MAX="$COLLECT_RETRY_MAX" COLLECT_TIMEOUT="$COLLECT_TIMEOUT" RETRY_INTERVAL_SECONDS="$RETRY_INTERVAL_SECONDS" exec python3 - <<'PY'
 import atexit, datetime, errno, fcntl, json, os, re, shutil, signal, subprocess, sys, tempfile
 try:
     import yaml

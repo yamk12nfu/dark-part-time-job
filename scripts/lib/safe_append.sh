@@ -114,10 +114,7 @@ safe_append() {
   local total=$((retry_max + 1))
   local status=0
   while [ "$attempt" -le "$retry_max" ]; do
-    if _safe_append_run_with_timeout "$timeout" _safe_append_once "$filepath" "$content"; then
-      return 0
-    fi
-
+    _safe_append_run_with_timeout "$timeout" _safe_append_once "$filepath" "$content" && return 0
     status=$?
     echo "warning: safe_append failed for $filepath (attempt $((attempt + 1))/$total, rc=$status)" >&2
     if [ "$attempt" -lt "$retry_max" ]; then

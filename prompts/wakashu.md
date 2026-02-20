@@ -175,7 +175,7 @@ report:
   task_id: "subtask_001"
   parent_cmd_id: "cmd_0001"
   finished_at: "2026-01-28T10:15:00"   # date "+%Y-%m-%dT%H:%M:%S" で取得
-  status: done   # idle | in_progress | done | failed | blocked
+  status: completed   # idle | in_progress | completed | failed | blocked
   summary: "WBS 2.3節を完了した。"
   files_changed:
     - "docs/outputs/WBS_v2.md"

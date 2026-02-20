@@ -215,9 +215,16 @@ def _fallback_resolve_target(parent_cmd_id, task_id):
     return "unknown"
 
 def _fallback_validate_feedback_entry(entry):
-    if isinstance(entry, dict):
-        return True, []
-    return False, ["feedback_entry"]
+    if not isinstance(entry, dict):
+        return False, ["feedback_entry"]
+
+    missing_fields = [
+        field for field in FALLBACK_REQUIRED_FEEDBACK_FIELDS if field not in entry
+    ]
+    if missing_fields:
+        return False, missing_fields
+
+    return True, []
 
 resolve_target = _fallback_resolve_target
 validate_feedback_entry = _fallback_validate_feedback_entry
@@ -784,7 +791,7 @@ def detect_feedback_entry_tamper(candidate_roots):
             warnings.append(
                 f"warning: 改変検知をスキップしました（git diff 失敗: {relative_path}）。"
             )
-            return [], warnings
+            continue
         if not diff_result.stdout:
             continue
         tampered_lines = extract_tampered_line_numbers(diff_result.stdout, required_field_patterns)

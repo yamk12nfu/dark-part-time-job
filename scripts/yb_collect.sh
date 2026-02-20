@@ -36,10 +36,103 @@ if [ -n "$session_id" ]; then
   session_suffix="_${session_id}"
 fi
 
-work_dir="$repo_root"
-panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
-if [ -f "$panes_file" ]; then
-  resolved_work_dir="$(PANES_FILE="$panes_file" REPO_ROOT="$repo_root" python3 - <<'PY'
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+READ_RETRY_MAX=2
+READ_TIMEOUT=10
+APPEND_RETRY_MAX=2
+APPEND_TIMEOUT=10
+COLLECT_RETRY_MAX=1
+COLLECT_TIMEOUT=60
+RETRY_INTERVAL_SECONDS=1
+
+SAFE_APPEND_LIB="$SCRIPTS_DIR/lib/safe_append.sh"
+if [ -f "$SAFE_APPEND_LIB" ]; then
+  # shellcheck source=/dev/null
+  source "$SAFE_APPEND_LIB"
+else
+  echo "warning: [APPEND] safe_append helper unavailable: $SAFE_APPEND_LIB" >&2
+fi
+
+run_with_timeout() {
+  local timeout="$1"
+  shift
+
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [ "$timeout" -le 0 ]; then
+    "$@"
+    return $?
+  fi
+
+  local marker
+  marker="$(mktemp)"
+
+  "$@" &
+  local target_pid=$!
+
+  (
+    sleep "$timeout"
+    if kill -0 "$target_pid" 2>/dev/null; then
+      echo "timeout" > "$marker"
+      kill -TERM "$target_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$target_pid" 2>/dev/null || true
+    fi
+  ) &
+  local watcher_pid=$!
+
+  local status=0
+  if wait "$target_pid"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+
+  if [ -s "$marker" ]; then
+    status=124
+  fi
+
+  rm -f "$marker"
+  return "$status"
+}
+
+RECOVERY_WARNING_LINES=()
+
+emit_recovery_warning() {
+  local stage="$1"
+  local message="$2"
+  local stamp
+  stamp="$(date "+%Y-%m-%dT%H:%M:%S")"
+  local line="- [WARN][$stamp][$stage] $message"
+  RECOVERY_WARNING_LINES+=("$line")
+  echo "warning: [$stage] $message" >&2
+}
+
+flush_recovery_warnings_to_dashboard() {
+  local dashboard_path="$1"
+  [ "${#RECOVERY_WARNING_LINES[@]}" -eq 0 ] && return 0
+
+  for line in "${RECOVERY_WARNING_LINES[@]}"; do
+    if declare -F safe_append >/dev/null 2>&1; then
+      if ! SAFE_APPEND_RETRY_MAX="$APPEND_RETRY_MAX" \
+        SAFE_APPEND_TIMEOUT="$APPEND_TIMEOUT" \
+        SAFE_APPEND_RETRY_INTERVAL="$RETRY_INTERVAL_SECONDS" \
+        safe_append "$dashboard_path" "$line"; then
+        echo "warning: [APPEND] failed to append warning with safe_append: $dashboard_path" >&2
+        printf '%s\n' "$line" >> "$dashboard_path" 2>/dev/null || true
+      fi
+    else
+      printf '%s\n' "$line" >> "$dashboard_path" 2>/dev/null || true
+    fi
+  done
+
+  RECOVERY_WARNING_LINES=()
+}
+
+resolve_work_dir_with_python() {
+  PANES_FILE="$panes_file" REPO_ROOT="$repo_root" exec python3 - <<'PY'
 import json, os
 
 repo_root = os.environ["REPO_ROOT"]
@@ -58,14 +151,41 @@ except (OSError, json.JSONDecodeError):
 
 print(work_dir)
 PY
-)"
+}
+
+work_dir="$repo_root"
+panes_file="$repo_root/.yamibaito/panes${session_suffix}.json"
+warning_dashboard_file="$repo_root/dashboard.md"
+if [ -f "$panes_file" ]; then
+  resolved_work_dir=""
+  read_attempt=0
+  while [ "$read_attempt" -le "$READ_RETRY_MAX" ]; do
+    if resolved_candidate="$(run_with_timeout "$READ_TIMEOUT" resolve_work_dir_with_python)"; then
+      resolved_work_dir="$resolved_candidate"
+      break
+    else
+      read_status=$?
+      emit_recovery_warning \
+        "READ" \
+        "work_dir resolve failed for $panes_file (attempt $((read_attempt + 1))/$((READ_RETRY_MAX + 1)), rc=$read_status)"
+      if [ "$read_attempt" -lt "$READ_RETRY_MAX" ]; then
+        sleep "$RETRY_INTERVAL_SECONDS"
+      fi
+      read_attempt=$((read_attempt + 1))
+    fi
+  done
+
   if [ -n "$resolved_work_dir" ]; then
     work_dir="$resolved_work_dir"
+  elif [ "$read_attempt" -gt "$READ_RETRY_MAX" ]; then
+    echo "error: [READ] retries exhausted for $panes_file; continue with repo_root=$repo_root" >&2
   fi
 fi
+warning_dashboard_file="$work_dir/dashboard.md"
 
-REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" python3 - <<'PY'
-import atexit, datetime, errno, fcntl, json, os, re, signal, subprocess, sys, tempfile
+run_collect_once() {
+REPO_ROOT="$repo_root" SESSION_SUFFIX="$session_suffix" LOCK_TIMEOUT="$lock_timeout" SCRIPTS_DIR="$SCRIPTS_DIR" READ_RETRY_MAX="$READ_RETRY_MAX" READ_TIMEOUT="$READ_TIMEOUT" APPEND_RETRY_MAX="$APPEND_RETRY_MAX" APPEND_TIMEOUT="$APPEND_TIMEOUT" COLLECT_RETRY_MAX="$COLLECT_RETRY_MAX" COLLECT_TIMEOUT="$COLLECT_TIMEOUT" RETRY_INTERVAL_SECONDS="$RETRY_INTERVAL_SECONDS" exec python3 - <<'PY'
+import atexit, datetime, errno, fcntl, json, os, re, shutil, signal, subprocess, sys, tempfile
 try:
     import yaml
 except ImportError:
@@ -73,6 +193,53 @@ except ImportError:
 
 repo_root = os.environ["REPO_ROOT"]
 session_suffix = os.environ.get("SESSION_SUFFIX", "")
+scripts_dir_env = os.environ.get("SCRIPTS_DIR", "")
+
+def _fallback_normalize_target_value(value):
+    if value is None:
+        return ""
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() == "null":
+        return ""
+    return normalized
+
+def _fallback_resolve_target(parent_cmd_id, task_id):
+    parent = _fallback_normalize_target_value(parent_cmd_id)
+    if parent:
+        return parent
+
+    task = _fallback_normalize_target_value(task_id)
+    if task:
+        return task
+
+    return "unknown"
+
+def _fallback_validate_feedback_entry(entry):
+    if not isinstance(entry, dict):
+        return False, ["feedback_entry"]
+
+    missing_fields = [
+        field for field in FALLBACK_REQUIRED_FEEDBACK_FIELDS if field not in entry
+    ]
+    if missing_fields:
+        return False, missing_fields
+
+    return True, []
+
+resolve_target = _fallback_resolve_target
+validate_feedback_entry = _fallback_validate_feedback_entry
+FALLBACK_REQUIRED_FEEDBACK_FIELDS = (
+    "datetime",
+    "role",
+    "target",
+    "issue",
+    "root_cause",
+    "action",
+    "expected_metric",
+    "evidence",
+)
+REQUIRED_FEEDBACK_FIELDS = FALLBACK_REQUIRED_FEEDBACK_FIELDS
+
 config_file = os.path.join(repo_root, ".yamibaito/config.yaml")
 panes_file = os.path.join(repo_root, f".yamibaito/panes{session_suffix}.json")
 
@@ -94,6 +261,39 @@ if os.path.exists(panes_file):
 work_dir = panes_data.get("work_dir", repo_root) if panes_data else repo_root
 if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
+
+scripts_dir_candidates = []
+for candidate in (
+    scripts_dir_env,
+    os.path.join(work_dir, "scripts"),
+    os.path.join(repo_root, "scripts"),
+):
+    if not isinstance(candidate, str) or not candidate:
+        continue
+    normalized = os.path.abspath(candidate)
+    if not os.path.isdir(normalized):
+        continue
+    if normalized not in scripts_dir_candidates:
+        scripts_dir_candidates.append(normalized)
+
+for candidate in reversed(scripts_dir_candidates):
+    if candidate not in sys.path:
+        sys.path.insert(0, candidate)
+
+try:
+    from lib.feedback import REQUIRED_FEEDBACK_FIELDS as imported_required_feedback_fields
+    from lib.feedback import resolve_target as imported_resolve_target
+    from lib.feedback import validate_feedback_entry as imported_validate_feedback_entry
+except Exception:
+    print(
+        "warning: feedback helpers unavailable; feedback validation is skipped for this run.",
+        file=sys.stderr,
+    )
+else:
+    resolve_target = imported_resolve_target
+    validate_feedback_entry = imported_validate_feedback_entry
+    if isinstance(imported_required_feedback_fields, (list, tuple)):
+        REQUIRED_FEEDBACK_FIELDS = tuple(imported_required_feedback_fields)
 
 # queue_dir を work_dir ベースで構築（フォールバック: repo_root）
 queue_dir = os.path.join(work_dir, ".yamibaito", f"queue{session_suffix}")
@@ -189,18 +389,35 @@ def normalize_text(value):
         return None
     return normalized
 
+def strip_inline_comment(value):
+    if value is None:
+        return None
+    text = str(value)
+    if " #" in text:
+        text = text.split(" #", 1)[0]
+    return text
+
 def normalize_phase(value):
-    phase = normalize_text(value)
+    phase = normalize_text(strip_inline_comment(value))
     if not phase:
         return "implement"
     return phase.lower()
 
 def normalize_review_result(value):
-    result = normalize_text(value)
+    result = normalize_text(strip_inline_comment(value))
     if not result:
         return None
     lowered = result.lower()
     return lowered if lowered in ("approve", "rework") else None
+
+_safe_log_token_pattern = re.compile(r"[^A-Za-z0-9_.:-]")
+
+def sanitize_log_token(value, default="-"):
+    normalized = normalize_text(value)
+    if not normalized:
+        return default
+    sanitized = _safe_log_token_pattern.sub("_", normalized)
+    return sanitized if sanitized else default
 
 def format_review_result_for_display(value):
     if value is None:
@@ -300,6 +517,68 @@ def parse_review_checklist_block(path):
         items.append(current)
     return items
 
+def parse_feedback_entries_block(path):
+    entries = []
+    malformed_count = 0
+    has_feedback_field = False
+    raw_feedback = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        return has_feedback_field, raw_feedback, malformed_count
+
+    in_block = False
+    base_indent = 0
+    current = None
+    for raw_line in lines:
+        line = raw_line.rstrip("\n")
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+
+        if not in_block:
+            if stripped.startswith("feedback:"):
+                key, _, tail = stripped.partition(":")
+                if key.strip() != "feedback":
+                    continue
+                has_feedback_field = True
+                in_block = True
+                base_indent = indent
+                tail_value = tail.strip()
+                if tail_value and tail_value != "[]":
+                    malformed_count += 1
+            continue
+
+        if stripped and indent <= base_indent:
+            break
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            inline_kv = stripped[2:].strip()
+            if inline_kv:
+                if ":" in inline_kv:
+                    k, v = inline_kv.split(":", 1)
+                    current[k.strip()] = normalize_text(v)
+                else:
+                    malformed_count += 1
+                    current = None
+            continue
+        if current is not None and ":" in stripped:
+            k, v = stripped.split(":", 1)
+            current[k.strip()] = normalize_text(v)
+        elif current is None and ":" in stripped:
+            continue
+        else:
+            malformed_count += 1
+
+    if current is not None:
+        entries.append(current)
+
+    return has_feedback_field, entries, malformed_count
+
 def load_report_payload(path):
     if yaml is None:
         return None
@@ -312,6 +591,55 @@ def load_report_payload(path):
         return None
     report_payload = payload.get("report", payload)
     return report_payload if isinstance(report_payload, dict) else None
+
+def load_valid_feedback_entries(report_path, report, report_payload):
+    entries = []
+    valid_count = 0
+    invalid_count = 0
+    has_feedback_field = False
+    raw_feedback = None
+
+    if isinstance(report_payload, dict):
+        has_feedback_field = "feedback" in report_payload
+        raw_feedback = report_payload.get("feedback")
+    else:
+        has_feedback_field, parsed_feedback_entries, malformed_count = parse_feedback_entries_block(report_path)
+        raw_feedback = parsed_feedback_entries
+        invalid_count += malformed_count
+
+    if raw_feedback is None and not has_feedback_field:
+        return entries, valid_count, invalid_count, has_feedback_field
+
+    if not isinstance(raw_feedback, list):
+        invalid_count += 1
+        report_name = os.path.basename(report_path) or report_path
+        print(
+            f"warning: feedback field skipped ({report_name}): feedback must be a list",
+            file=sys.stderr,
+        )
+        return entries, valid_count, invalid_count, has_feedback_field
+
+    normalized_target = resolve_target(report.get("parent_cmd_id"), report.get("task_id"))
+    report_name = os.path.basename(report_path) or report_path
+
+    for index, raw_entry in enumerate(raw_feedback, start=1):
+        is_valid, missing_fields = validate_feedback_entry(raw_entry)
+        if not is_valid:
+            invalid_count += 1
+            missing_names = [name for name in missing_fields if isinstance(name, str) and name]
+            missing_summary = ", ".join(missing_names) if missing_names else "invalid_entry"
+            print(
+                f"warning: feedback entry skipped ({report_name}#{index}): missing {missing_summary}",
+                file=sys.stderr,
+            )
+            continue
+
+        entry = dict(raw_entry)
+        entry["target"] = normalized_target
+        entries.append(entry)
+        valid_count += 1
+
+    return entries, valid_count, invalid_count, has_feedback_field
 
 def infer_gate_id(report):
     direct_gate_id = normalize_text(report.get("gate_id"))
@@ -342,6 +670,143 @@ def list_files(dir_path, suffix):
     if not os.path.isdir(dir_path):
         return []
     return [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(suffix)]
+
+FEEDBACK_AUDIT_RELATIVE_PATHS = (
+    ".yamibaito/feedback/global.md",
+    ".yamibaito/feedback/waka.md",
+    ".yamibaito/feedback/workers.md",
+)
+ENTRY_HEADER_PATTERN = re.compile(r"^\s*###\s+")
+DIFF_HUNK_PATTERN = re.compile(r"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@")
+
+def build_required_field_patterns(required_fields):
+    patterns = []
+    for field_name in required_fields:
+        if not isinstance(field_name, str):
+            continue
+        normalized = field_name.strip()
+        if not normalized:
+            continue
+        patterns.append(re.compile(rf"^\s*(?:-\s*)?{re.escape(normalized)}\s*:"))
+    return patterns
+
+def extract_tampered_line_numbers(diff_text, required_field_patterns):
+    line_numbers = []
+    old_line_number = None
+    for raw_line in diff_text.splitlines():
+        if raw_line.startswith("@@"):
+            match = DIFF_HUNK_PATTERN.match(raw_line)
+            old_line_number = int(match.group(1)) if match else None
+            continue
+        if old_line_number is None:
+            continue
+        if raw_line.startswith("---") or raw_line.startswith("+++"):
+            continue
+        if raw_line.startswith("-"):
+            removed_line = raw_line[1:]
+            is_required_field = any(pattern.match(removed_line) for pattern in required_field_patterns)
+            if ENTRY_HEADER_PATTERN.match(removed_line) or is_required_field:
+                line_numbers.append(old_line_number)
+            old_line_number += 1
+            continue
+        if raw_line.startswith("+"):
+            continue
+        old_line_number += 1
+    return sorted(set(line_numbers))
+
+def format_line_ranges(line_numbers):
+    if not line_numbers:
+        return "-"
+    normalized_lines = sorted(set(line_numbers))
+    ranges = []
+    range_start = normalized_lines[0]
+    range_end = normalized_lines[0]
+    for line_number in normalized_lines[1:]:
+        if line_number == range_end + 1:
+            range_end = line_number
+            continue
+        if range_start == range_end:
+            ranges.append(str(range_start))
+        else:
+            ranges.append(f"{range_start}-{range_end}")
+        range_start = line_number
+        range_end = line_number
+    if range_start == range_end:
+        ranges.append(str(range_start))
+    else:
+        ranges.append(f"{range_start}-{range_end}")
+    return ",".join(ranges)
+
+def detect_feedback_entry_tamper(candidate_roots):
+    warnings = []
+    git_bin = shutil.which("git")
+    if not git_bin:
+        warnings.append("warning: 改変検知をスキップしました（git コマンド未検出）。")
+        return [], warnings
+
+    unique_roots = []
+    for candidate in candidate_roots:
+        if not isinstance(candidate, str):
+            continue
+        normalized = os.path.abspath(candidate)
+        if not os.path.isdir(normalized):
+            continue
+        if normalized not in unique_roots:
+            unique_roots.append(normalized)
+
+    git_root = None
+    for candidate_root in unique_roots:
+        inside_result = subprocess.run(
+            [git_bin, "-C", candidate_root, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if inside_result.returncode == 0 and inside_result.stdout.strip() == "true":
+            git_root = candidate_root
+            break
+
+    if not git_root:
+        warnings.append("warning: 改変検知をスキップしました（git 管理外ディレクトリ）。")
+        return [], warnings
+
+    head_result = subprocess.run(
+        [git_bin, "-C", git_root, "rev-parse", "--verify", "HEAD^{commit}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if head_result.returncode != 0:
+        warnings.append("warning: 改変検知をスキップしました（git リポジトリ未初期化または HEAD 未確定）。")
+        return [], warnings
+
+    required_field_patterns = build_required_field_patterns(REQUIRED_FEEDBACK_FIELDS)
+    findings = []
+    for relative_path in FEEDBACK_AUDIT_RELATIVE_PATHS:
+        diff_result = subprocess.run(
+            [git_bin, "-C", git_root, "diff", "--no-color", "--unified=0", "HEAD", "--", relative_path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if diff_result.returncode != 0:
+            warnings.append(
+                f"warning: 改変検知をスキップしました（git diff 失敗: {relative_path}）。"
+            )
+            continue
+        if not diff_result.stdout:
+            continue
+        tampered_lines = extract_tampered_line_numbers(diff_result.stdout, required_field_patterns)
+        if tampered_lines:
+            findings.append(
+                {
+                    "path": relative_path,
+                    "line_numbers": tampered_lines,
+                    "line_ranges": format_line_ranges(tampered_lines),
+                }
+            )
+
+    return findings, warnings
 
 def atomic_write_text(path, text):
     tmp_path = None
@@ -433,7 +898,21 @@ if task_candidates:
         t["status"] in completion_statuses for t in current_cmd_tasks
     )
 
+feedback_tamper_findings, feedback_tamper_warnings = detect_feedback_entry_tamper((work_dir, repo_root))
+for tamper_warning in feedback_tamper_warnings:
+    print(tamper_warning, file=sys.stderr)
+for tamper_finding in feedback_tamper_findings:
+    print(
+        f"warning: [ENTRY_TAMPERED] 改変検知 {tamper_finding['path']} lines {tamper_finding['line_ranges']}",
+        file=sys.stderr,
+    )
+feedback_tampered_count = len(feedback_tamper_findings)
+feedback_tamper_summary = "; ".join(
+    f"{finding['path']}:{finding['line_ranges']}" for finding in feedback_tamper_findings
+)
+
 reports = []
+feedback_summary = {"valid": 0, "invalid": 0}
 report_keys = [
     "worker_id",
     "task_id",
@@ -483,6 +962,22 @@ for report_path in list_files(reports_dir, "_report.yaml"):
         report["rework_instructions_items"] = []
         report["has_quality_gate_fields"] = False
 
+    report["feedback_target"] = resolve_target(report.get("parent_cmd_id"), report.get("task_id"))
+    feedback_entries, feedback_valid_count, feedback_invalid_count, feedback_has_field = load_valid_feedback_entries(
+        report_path,
+        report,
+        report_payload,
+    )
+    report["feedback_entries"] = feedback_entries
+    report["feedback_valid_count"] = feedback_valid_count
+    report["feedback_invalid_count"] = feedback_invalid_count
+    report["feedback_has_field"] = feedback_has_field
+    report["feedback_missing"] = (not feedback_has_field) or (
+        feedback_valid_count == 0 and feedback_invalid_count == 0
+    )
+    feedback_summary["valid"] += feedback_valid_count
+    feedback_summary["invalid"] += feedback_invalid_count
+
     if not report["review_checklist_items"]:
         report["review_checklist_items"] = parse_review_checklist_block(report_path)
     if not report["rework_instructions_items"]:
@@ -493,6 +988,33 @@ for report_path in list_files(reports_dir, "_report.yaml"):
     report["review_result_raw"] = report.get("review_result")
     report["review_result"] = normalize_review_result(report.get("review_result"))
     report["enabled_snapshot"] = normalize_enabled_snapshot(report.get("enabled_snapshot"), True)
+    report["is_rework_repeat"] = (
+        report.get("phase") == "review"
+        and report.get("review_result") == "rework"
+        and report.get("loop_count", 0) >= 2
+    )
+    report["error_code"] = "NONE"
+    if feedback_tampered_count > 0:
+        report["error_code"] = "ENTRY_TAMPERED"
+    elif report.get("feedback_invalid_count", 0) > 0:
+        report["error_code"] = "FEEDBACK_INVALID"
+    elif report.get("feedback_missing"):
+        report["error_code"] = "FEEDBACK_MISSING"
+    elif report.get("is_rework_repeat"):
+        report["error_code"] = "REWORK_REPEAT"
+
+    print(
+        "collect_log:"
+        f" cmd_id={sanitize_log_token(report.get('parent_cmd_id'), 'unknown')}"
+        f" task_id={sanitize_log_token(report.get('task_id'), 'unknown')}"
+        f" phase={sanitize_log_token(report.get('phase'), 'implement')}"
+        f" loop_count={parse_non_negative_int(report.get('loop_count'), 0)}"
+        f" error_code={report.get('error_code')}"
+        f" feedback_valid={parse_non_negative_int(report.get('feedback_valid_count'), 0)}"
+        f" feedback_invalid={parse_non_negative_int(report.get('feedback_invalid_count'), 0)}",
+        file=sys.stderr,
+    )
+
     if not report["has_quality_gate_fields"]:
         report["has_quality_gate_fields"] = bool(
             report["review_checklist_items"]
@@ -510,12 +1032,21 @@ attention = []
 done = []
 skill_candidates = []
 quality_gate_summary = {"review_waiting": 0, "approve": 0, "rework": 0, "invalid": 0, "escalation": 0}
+feedback_health_summary = {
+    "missing": 0,
+    "invalid": 0,
+    "rework_repeat": 0,
+    "entry_tampered_count": feedback_tampered_count,
+}
 review_checklist_counts = {}
 implemented_gate_ids = set()
 reviewed_gate_ids = set()
+rework_repeat_gate_ids = set()
 quality_gate_rework_lines = []
 quality_gate_invalid_lines = []
 quality_gate_escalation_lines = []
+feedback_invalid_lines = []
+feedback_tamper_attention_lines = []
 completed_worker_ids = set()  # 完了した若衆のID（タスクファイルリセット用）
 for r in reports:
     status = str(r.get("status") or "").lower()
@@ -531,6 +1062,15 @@ for r in reports:
     found = str(r.get("skill_candidate_found") or "").lower() == "true"
     if found and r.get("skill_candidate_name"):
         skill_candidates.append(r)
+    invalid_feedback_count = int(r.get("feedback_invalid_count") or 0)
+    if r.get("feedback_missing"):
+        feedback_health_summary["missing"] += 1
+    if invalid_feedback_count > 0:
+        feedback_health_summary["invalid"] += 1
+        feedback_invalid_lines.append(
+            f"- [{r.get('feedback_target')}] ⚠️ feedback無効エントリ {invalid_feedback_count}件をスキップ "
+            f"(worker: {r.get('worker_id') or '-'})"
+        )
 
     gate_id = infer_gate_id(r)
     if (
@@ -560,6 +1100,8 @@ for r in reports:
             reviewed_gate_ids.add(gate_id)
         elif review_result == "rework":
             reviewed_gate_ids.add(gate_id)
+            if r.get("is_rework_repeat"):
+                rework_repeat_gate_ids.add(gate_id)
             if loop_count >= max_rework_loops:
                 quality_gate_summary["escalation"] += 1
                 quality_gate_escalation_lines.append(f"- [{gate_id}] エスカレーション: {loop_count}回差し戻し上限超過")
@@ -575,6 +1117,24 @@ for r in reports:
             )
 
 quality_gate_summary["review_waiting"] = len(implemented_gate_ids - reviewed_gate_ids)
+feedback_health_summary["rework_repeat"] = len(rework_repeat_gate_ids)
+if feedback_tampered_count > 0:
+    target_pairs = []
+    seen_target_pairs = set()
+    for report in reports:
+        cmd_id = normalize_text(report.get("parent_cmd_id")) or "unknown"
+        task_id = normalize_text(report.get("task_id")) or "unknown"
+        key = (cmd_id, task_id)
+        if key in seen_target_pairs:
+            continue
+        seen_target_pairs.add(key)
+        target_pairs.append(key)
+    if not target_pairs:
+        target_pairs.append((normalize_text(current_cmd_id) or "unknown", "unknown"))
+    for cmd_id, task_id in target_pairs:
+        feedback_tamper_attention_lines.append(
+            f"- [{cmd_id}/{task_id}] ⚠️ ENTRY_TAMPERED: {feedback_tamper_summary}"
+        )
 
 now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 plan_root = os.path.join(work_dir, ".yamibaito", "plan")
@@ -720,6 +1280,20 @@ lines.append(f"| approve | {quality_gate_summary['approve']} |")
 lines.append(f"| rework | {quality_gate_summary['rework']} |")
 lines.append(f"| invalid | {quality_gate_summary['invalid']} |")
 lines.append(f"| エスカレーション | {quality_gate_summary['escalation']} |")
+lines.append("")
+lines.append("### feedback 健全性")
+lines.append("| 指標 | 件数 |")
+lines.append("|---|---:|")
+lines.append(f"| 未追記 | {feedback_health_summary['missing']} |")
+lines.append(f"| 形式不正 | {feedback_health_summary['invalid']} |")
+lines.append(f"| rework再発 | {feedback_health_summary['rework_repeat']} |")
+lines.append(f"| entry_tampered_count | {feedback_health_summary['entry_tampered_count']} |")
+lines.append("")
+lines.append("### feedback 集計")
+lines.append("| 種別 | 件数 |")
+lines.append("|---|---:|")
+lines.append(f"| 有効 | {feedback_summary['valid']} |")
+lines.append(f"| 無効（スキップ） | {feedback_summary['invalid']} |")
 if review_checklist_counts:
     lines.append("")
     lines.append("### review_checklist 集計")
@@ -739,6 +1313,8 @@ for r in attention:
 attention_lines.extend(quality_gate_invalid_lines)
 attention_lines.extend(quality_gate_rework_lines)
 attention_lines.extend(quality_gate_escalation_lines)
+attention_lines.extend(feedback_tamper_attention_lines)
+attention_lines.extend(feedback_invalid_lines)
 if attention_lines:
     lines.extend(attention_lines)
 else:
@@ -867,5 +1443,34 @@ if current_cmd_id and all_tasks_completed_for_current_cmd:
         except (FileNotFoundError, OSError) as e:
             print(f"warning: failed to send tmux notification: {e}", file=sys.stderr)
 PY
+}
 
-echo "yb collect: dashboard updated at $work_dir"
+collect_succeeded=0
+collect_attempt=0
+while [ "$collect_attempt" -le "$COLLECT_RETRY_MAX" ]; do
+  if run_with_timeout "$COLLECT_TIMEOUT" run_collect_once; then
+    collect_succeeded=1
+    break
+  else
+    collect_status=$?
+    emit_recovery_warning \
+      "COLLECT" \
+      "collect failed (attempt $((collect_attempt + 1))/$((COLLECT_RETRY_MAX + 1)), rc=$collect_status)"
+    if [ "$collect_attempt" -lt "$COLLECT_RETRY_MAX" ]; then
+      sleep "$RETRY_INTERVAL_SECONDS"
+    fi
+    collect_attempt=$((collect_attempt + 1))
+  fi
+done
+
+if [ "$collect_succeeded" -ne 1 ]; then
+  echo "error: [COLLECT] retries exhausted; continue without blocking other workers." >&2
+fi
+
+flush_recovery_warnings_to_dashboard "$warning_dashboard_file"
+
+if [ "$collect_succeeded" -eq 1 ]; then
+  echo "yb collect: dashboard updated at $work_dir"
+else
+  echo "yb collect: collect warnings recorded at $work_dir"
+fi

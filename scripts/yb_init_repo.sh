@@ -83,6 +83,23 @@ templates_dir="$config_dir/templates"
 mkdir -p "$templates_dir"
 cp "$ORCH_ROOT/templates/review-checklist.yaml" "$templates_dir/review-checklist.yaml"
 
+feedback_templates_dir="$templates_dir/feedback"
+mkdir -p "$feedback_templates_dir"
+for feedback_template in global.md waka.md workers.md; do
+  cp "$ORCH_ROOT/templates/feedback/$feedback_template" "$feedback_templates_dir/$feedback_template"
+done
+
+feedback_dir="$config_dir/feedback"
+if [ ! -d "$feedback_dir" ]; then
+  mkdir -p "$feedback_dir"
+  for feedback_template in global.md waka.md workers.md; do
+    cp "$feedback_templates_dir/$feedback_template" "$feedback_dir/$feedback_template"
+  done
+  echo "yb init: feedback templates copied to .yamibaito/feedback/"
+else
+  echo "yb init: feedback directory already exists, skipping template copy"
+fi
+
 validate_required_prompts "$repo_root"
 
 worker_count=$(grep -E "^\\s*codex_count:" "$config_dir/config.yaml" | awk '{print $2}')

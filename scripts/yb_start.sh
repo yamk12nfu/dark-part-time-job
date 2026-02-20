@@ -111,8 +111,8 @@ if [ -n "$worktree_root" ]; then
   # 実ディレクトリを作成
   mkdir -p "$yamibaito_dir"
 
-  # 個別 symlink を作成（config.yaml, prompts/, skills/, plan/）
-  for item in config.yaml prompts skills plan; do
+  # 個別 symlink を作成（config.yaml, prompts/, skills/, plan/, feedback/）
+  for item in config.yaml prompts skills plan feedback; do
     target="$repo_root/.yamibaito/$item"
     link="$yamibaito_dir/$item"
     # 壊れた symlink が残っていれば除去

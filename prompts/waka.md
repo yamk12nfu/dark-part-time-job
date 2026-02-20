@@ -510,9 +510,12 @@ tail -n 20 .yamibaito/feedback/workers.md
 # global.md 昇格追記
 cat <<'EOF' >> .yamibaito/feedback/global.md
 - datetime: "YYYY-MM-DDTHH:MM:SS"
-  category: "process"
-  lesson: "..."
-  applies_to: "..."
+  role: "waka"
+  target: "cmd_xxxx"
+  issue: "..."
+  root_cause: "..."
+  action: "..."
+  expected_metric: "..."
   evidence: "..."
 EOF
 tail -n 20 .yamibaito/feedback/global.md

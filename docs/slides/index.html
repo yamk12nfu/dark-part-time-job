@@ -1,0 +1,929 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yamibaito Orchestrator | AI エージェント協調フレームワーク</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-main: #0a0a0f;
+        --bg-alt: #12121a;
+        --text-main: #e8e8ed;
+        --text-sub: #8a8a9a;
+        --accent: #c0392b;
+        --accent-bright: #e74c3c;
+        --accent-grad: linear-gradient(135deg, #c0392b, #e67e22);
+        --card-bg: rgba(255, 255, 255, 0.04);
+        --card-border: rgba(255, 255, 255, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg-main);
+        color: var(--text-main);
+        font-family: "Noto Sans JP", sans-serif;
+        scroll-behavior: smooth;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4 {
+        margin: 0 0 1rem;
+        line-height: 1.25;
+        font-family: "Shippori Mincho", serif;
+        font-weight: 700;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.8;
+        color: var(--text-sub);
+      }
+
+      .gradient-text {
+        background: linear-gradient(135deg, #e74c3c, #e67e22);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      .container {
+        width: min(1200px, 100% - 4rem);
+        margin: 0 auto;
+      }
+
+      .section {
+        position: relative;
+        padding: 100px 0;
+        overflow: clip;
+      }
+
+      .section.alt {
+        background: var(--bg-alt);
+      }
+
+      .section::before {
+        content: "";
+        position: absolute;
+        inset: auto auto 10% -10%;
+        width: 360px;
+        height: 360px;
+        background: radial-gradient(circle, rgba(192, 57, 43, 0.16), transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .section.alt::before {
+        inset: 0 -10% auto auto;
+      }
+
+      .section > .container {
+        position: relative;
+        z-index: 1;
+      }
+
+      .section-title {
+        margin-bottom: 2.4rem;
+        font-size: clamp(2rem, 4vw, 3rem);
+      }
+
+      .section-lead {
+        margin-top: -1rem;
+        margin-bottom: 2rem;
+      }
+
+      .glass-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        padding: 2rem;
+      }
+
+      .hero {
+        min-height: 100vh;
+        display: grid;
+        align-items: center;
+        position: relative;
+        padding: 120px 0 80px;
+        background:
+          radial-gradient(ellipse at 50% 0%, rgba(192, 57, 43, 0.15), transparent 70%),
+          var(--bg-main);
+      }
+
+      .hero-inner {
+        display: grid;
+        gap: 1.5rem;
+        text-align: center;
+      }
+
+      .hero h1 {
+        font-size: clamp(3rem, 9vw, 5.6rem);
+        letter-spacing: 0.02em;
+      }
+
+      .hero .subtitle {
+        color: var(--text-main);
+        font-size: clamp(1.1rem, 2.5vw, 1.45rem);
+      }
+
+      .hero .catch {
+        color: var(--text-sub);
+        font-size: clamp(1rem, 2vw, 1.2rem);
+      }
+
+      .scroll-cue {
+        position: absolute;
+        left: 50%;
+        bottom: 24px;
+        transform: translateX(-50%);
+        display: grid;
+        place-items: center;
+        gap: 0.4rem;
+        color: var(--text-sub);
+        font-size: 0.85rem;
+      }
+
+      .scroll-cue .arrow {
+        width: 20px;
+        height: 20px;
+        border-right: 2px solid var(--accent-bright);
+        border-bottom: 2px solid var(--accent-bright);
+        transform: rotate(45deg);
+        animation: bounce 1.7s infinite;
+      }
+
+      .issues-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1.1rem;
+      }
+
+      .issue-card h3 {
+        font-size: 1.4rem;
+        margin-bottom: 0.6rem;
+      }
+
+      .issue-card p {
+        font-size: 1rem;
+      }
+
+      .arch-section {
+        margin-top: 2rem;
+      }
+
+      .arch-flow {
+        display: grid;
+        gap: 1rem;
+        justify-items: center;
+      }
+
+      .node {
+        width: min(780px, 100%);
+        text-align: left;
+      }
+
+      .node-title {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        color: var(--text-main);
+        margin-bottom: 0.4rem;
+        font-size: 1.2rem;
+        font-weight: 700;
+      }
+
+      .node small {
+        color: var(--text-sub);
+        font-size: 0.98rem;
+      }
+
+      .workers-grid {
+        width: min(980px, 100%);
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 0.8rem;
+      }
+
+      .worker {
+        text-align: center;
+        padding: 1rem;
+      }
+
+      .worker .icon {
+        font-size: 1.3rem;
+        margin-bottom: 0.3rem;
+      }
+
+      .worker strong {
+        font-size: 0.95rem;
+      }
+
+      .connector {
+        width: 2px;
+        height: 42px;
+        background: var(--accent-grad);
+        position: relative;
+      }
+
+      .connector::after {
+        content: "";
+        position: absolute;
+        bottom: -10px;
+        left: 50%;
+        transform: translateX(-50%);
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-top: 10px solid #e67e22;
+      }
+
+      .branch {
+        width: min(720px, 90%);
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #d35400, transparent);
+        position: relative;
+      }
+
+      .branch::before,
+      .branch::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        width: 2px;
+        height: 24px;
+        background: #d35400;
+      }
+
+      .branch::before {
+        left: 8%;
+      }
+
+      .branch::after {
+        right: 8%;
+      }
+
+      .workflow-track {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 0.6rem;
+      }
+
+      .workflow-step {
+        position: relative;
+        padding: 1rem;
+        min-height: 128px;
+      }
+
+      .workflow-step::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -0.48rem;
+        width: 0.88rem;
+        height: 0.88rem;
+        border-top: 2px solid rgba(255, 255, 255, 0.25);
+        border-right: 2px solid rgba(255, 255, 255, 0.25);
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .workflow-step:last-child::after {
+        display: none;
+      }
+
+      .workflow-step .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 999px;
+        background: var(--accent-grad);
+        color: #fff;
+        font-weight: 700;
+        margin-bottom: 0.6rem;
+      }
+
+      .workflow-step strong {
+        display: block;
+        margin-bottom: 0.4rem;
+      }
+
+      .workflow-step.active {
+        border-color: rgba(231, 76, 60, 0.75);
+        box-shadow: 0 0 0 1px rgba(231, 76, 60, 0.3) inset;
+      }
+
+      .feature-list {
+        display: grid;
+        gap: 1rem;
+      }
+
+      .feature-item {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .feature-item.reverse .feature-text {
+        order: 2;
+      }
+
+      .feature-item.reverse .feature-visual {
+        order: 1;
+      }
+
+      .feature-text h3 {
+        font-size: 1.55rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .feature-text ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        color: var(--text-sub);
+        line-height: 1.8;
+      }
+
+      .feature-text code {
+        display: inline-block;
+        margin-top: 0.9rem;
+        padding: 0.22rem 0.5rem;
+        border-radius: 6px;
+        font-size: 0.92rem;
+        color: #ffe8e0;
+        background: rgba(192, 57, 43, 0.22);
+      }
+
+      .feature-visual {
+        display: grid;
+        gap: 0.7rem;
+        align-content: center;
+      }
+
+      .visual-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .mini-chip {
+        padding: 0.36rem 0.7rem;
+        border-radius: 999px;
+        border: 1px solid var(--card-border);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text-main);
+        font-size: 0.88rem;
+      }
+
+      .mini-box {
+        padding: 0.7rem 0.9rem;
+        border-radius: 10px;
+        border: 1px solid var(--card-border);
+        background: rgba(255, 255, 255, 0.02);
+        color: var(--text-sub);
+        font-size: 0.9rem;
+      }
+
+      .terminal {
+        background: #060709;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 14px;
+        padding: 1.2rem 1rem;
+        font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        color: #d5ffd9;
+        line-height: 1.75;
+        overflow: hidden;
+      }
+
+      .term-line {
+        width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        border-right: 2px solid rgba(213, 255, 217, 0.9);
+        animation: typing 2.8s steps(48, end) forwards;
+      }
+
+      .term-line:nth-child(2) {
+        animation-delay: 1.2s;
+      }
+
+      .term-line:nth-child(3) {
+        animation-delay: 2.4s;
+      }
+
+      .term-line:nth-child(4) {
+        animation-delay: 3.6s;
+      }
+
+      .term-line:nth-child(5) {
+        animation-delay: 4.8s;
+      }
+
+      .term-line:nth-child(6) {
+        animation-delay: 6s;
+      }
+
+      .stack-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.9rem;
+      }
+
+      .stack-chip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.8rem;
+      }
+
+      .stack-chip strong {
+        padding: 0.38rem 0.72rem;
+        border-radius: 999px;
+        background: rgba(231, 76, 60, 0.22);
+        color: #ffd8d3;
+        font-size: 0.9rem;
+      }
+
+      .stack-chip span {
+        color: var(--text-sub);
+        font-size: 0.94rem;
+      }
+
+      .roadmap {
+        margin-top: 1.8rem;
+        display: grid;
+        gap: 0.8rem;
+      }
+
+      .phase {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.9rem;
+        align-items: center;
+      }
+
+      .phase strong {
+        min-width: 88px;
+        color: #ffd8d3;
+      }
+
+      footer {
+        margin-top: 2.2rem;
+        padding-top: 1.2rem;
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        color: var(--text-sub);
+        font-size: 0.92rem;
+      }
+
+      footer a {
+        color: #ffd8d3;
+        text-decoration: none;
+      }
+
+      .fade-in {
+        opacity: 0;
+        transform: translateY(30px);
+        transition: opacity 0.8s ease, transform 0.8s ease;
+      }
+
+      .fade-in.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .fade-left {
+        opacity: 0;
+        transform: translateX(-28px);
+        transition: opacity 0.8s ease, transform 0.8s ease;
+      }
+
+      .fade-right {
+        opacity: 0;
+        transform: translateX(28px);
+        transition: opacity 0.8s ease, transform 0.8s ease;
+      }
+
+      .fade-left.visible,
+      .fade-right.visible {
+        opacity: 1;
+        transform: translateX(0);
+      }
+
+      @keyframes bounce {
+        0%,
+        100% {
+          transform: rotate(45deg) translate(0, 0);
+        }
+        50% {
+          transform: rotate(45deg) translate(6px, 6px);
+        }
+      }
+
+      @keyframes typing {
+        from {
+          width: 0;
+        }
+        to {
+          width: 100%;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .issues-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .workers-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .workflow-track {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .workflow-step::after {
+          display: none;
+        }
+
+        .stack-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .container {
+          width: min(1200px, 100% - 2rem);
+        }
+
+        .section {
+          padding: 60px 0;
+        }
+
+        .section-title {
+          font-size: clamp(1.8rem, 7.5vw, 2.35rem);
+        }
+
+        .hero {
+          min-height: 100vh;
+          padding: 100px 0 70px;
+        }
+
+        .feature-item {
+          grid-template-columns: 1fr;
+        }
+
+        .feature-item.reverse .feature-text,
+        .feature-item.reverse .feature-visual {
+          order: initial;
+        }
+
+        .workers-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .terminal {
+          font-size: 0.86rem;
+        }
+
+        .term-line {
+          white-space: normal;
+          border-right: 0;
+          width: 100%;
+          animation: none;
+        }
+      }
+    </style>
+    <noscript>
+      <style>
+        .fade-in,
+        .fade-left,
+        .fade-right {
+          opacity: 1 !important;
+          transform: none !important;
+        }
+      </style>
+    </noscript>
+  </head>
+  <body>
+    <section id="hero" class="hero">
+      <div class="container hero-inner">
+        <h1 class="gradient-text">Yamibaito Orchestrator</h1>
+        <p class="subtitle">AI エージェント協調フレームワーク</p>
+        <p class="catch">親分 → 若頭 → 若衆で、大規模実装を段取り化して前に進める。</p>
+      </div>
+      <div class="scroll-cue" aria-hidden="true">
+        <span>Scroll</span>
+        <span class="arrow"></span>
+      </div>
+    </section>
+
+    <section class="section alt" id="issue">
+      <div class="container">
+        <h2 class="section-title fade-in">課題: 大規模コーディングの人手ボトルネック</h2>
+        <div class="issues-grid">
+          <article class="glass-card issue-card fade-in" data-delay="0">
+            <h3>分解が重い</h3>
+            <p>タスク分解に時間がかかり、実装開始が遅れる。</p>
+          </article>
+          <article class="glass-card issue-card fade-in" data-delay="120">
+            <h3>並列実行が崩れる</h3>
+            <p>手動調整では依存関係の管理が破綻する。</p>
+          </article>
+          <article class="glass-card issue-card fade-in" data-delay="240">
+            <h3>品質確認が後手</h3>
+            <p>レビューが最後に集中し、手戻りコストが膨らむ。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="solution">
+      <div class="container">
+        <h2 class="section-title fade-in">解決策: 階層型 AI オーケストレーション</h2>
+        <p class="section-lead fade-in" data-delay="80">
+          <span class="gradient-text">統括・計画・実装</span> を明確に分離し、段取りと速度を同時に成立させる。
+        </p>
+
+        <div class="arch-section arch-flow">
+          <div class="glass-card node fade-in" data-delay="0">
+            <div class="node-title">🏯 親分ノード（Oyabun）</div>
+            <small>意思決定・統括 / Claude Code</small>
+          </div>
+
+          <div class="connector fade-in" data-delay="120"></div>
+
+          <div class="glass-card node fade-in" data-delay="240">
+            <div class="node-title">📋 若頭ノード（Waka）</div>
+            <small>計画・分解・品質管理 / Claude Code</small>
+          </div>
+
+          <div class="connector fade-in" data-delay="360"></div>
+          <div class="branch fade-in" data-delay="460"></div>
+
+          <div class="workers-grid">
+            <div class="glass-card worker fade-in" data-delay="540"><div class="icon">⚙️</div><strong>若衆 001</strong><p>Codex</p></div>
+            <div class="glass-card worker fade-in" data-delay="600"><div class="icon">⚙️</div><strong>若衆 002</strong><p>Codex</p></div>
+            <div class="glass-card worker fade-in" data-delay="660"><div class="icon">⚙️</div><strong>若衆 003</strong><p>Codex</p></div>
+            <div class="glass-card worker fade-in" data-delay="720"><div class="icon">⚙️</div><strong>若衆 004</strong><p>Codex</p></div>
+            <div class="glass-card worker fade-in" data-delay="780"><div class="icon">⚙️</div><strong>若衆 005</strong><p>Codex</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="workflow">
+      <div class="container">
+        <h2 class="section-title fade-in">ワークフロー</h2>
+        <div class="workflow-track" id="workflowTrack">
+          <article class="glass-card workflow-step"><span class="num">1</span><strong>指示</strong><p>親分がゴールを定義</p></article>
+          <article class="glass-card workflow-step"><span class="num">2</span><strong>計画</strong><p>若頭が実行計画化</p></article>
+          <article class="glass-card workflow-step"><span class="num">3</span><strong>分解</strong><p>依存関係つきで分割</p></article>
+          <article class="glass-card workflow-step"><span class="num">4</span><strong>並列実行</strong><p>若衆が同時実装</p></article>
+          <article class="glass-card workflow-step"><span class="num">5</span><strong>収集</strong><p>YAML レポート回収</p></article>
+          <article class="glass-card workflow-step"><span class="num">6</span><strong>品質ゲート</strong><p>approve / rework 判定</p></article>
+          <article class="glass-card workflow-step"><span class="num">7</span><strong>完了</strong><p>統合して完了報告</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="container">
+        <h2 class="section-title fade-in">主要機能</h2>
+        <div class="feature-list">
+          <article class="feature-item fade-in">
+            <div class="glass-card feature-text">
+              <h3>① tmux ベース並列実行</h3>
+              <ul>
+                <li>tmux のマルチペイン管理でワーカーを並列起動</li>
+                <li>ペインマップ: oyabun / waka / worker_001〜005</li>
+              </ul>
+              <code>yb start --repo /path/to/repo</code>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="mini-box">oyabun</div>
+              <div class="visual-row">
+                <span class="mini-chip">waka</span>
+                <span class="mini-chip">worker_001</span>
+                <span class="mini-chip">worker_002</span>
+                <span class="mini-chip">worker_003</span>
+                <span class="mini-chip">worker_004</span>
+                <span class="mini-chip">worker_005</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="feature-item reverse fade-in">
+            <div class="glass-card feature-text">
+              <h3>② YAML 駆動タスクキュー &amp; レポート</h3>
+              <ul>
+                <li>タスク定義・レポートはすべて YAML ファイル</li>
+                <li>機械可読で自動処理可能</li>
+              </ul>
+              <code>director_to_planner.yaml → tasks/worker_XXX.yaml → reports/worker_XXX_report.yaml</code>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="mini-box">director_to_planner.yaml</div>
+              <div class="mini-box">tasks/worker_001.yaml</div>
+              <div class="mini-box">reports/worker_001_report.yaml</div>
+            </div>
+          </article>
+
+          <article class="feature-item fade-in">
+            <div class="glass-card feature-text">
+              <h3>③ 計画モード（PRD + SPEC + tasks.yaml）</h3>
+              <ul>
+                <li><code>yb plan</code> で計画作成セッション起動</li>
+                <li>PRD.md + SPEC.md + tasks.yaml の3点セット</li>
+                <li><code>yb plan-review</code> で静的バリデーション + LLM レビュー</li>
+              </ul>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="visual-row">
+                <span class="mini-chip">PRD.md</span>
+                <span class="mini-chip">SPEC.md</span>
+                <span class="mini-chip">tasks.yaml</span>
+              </div>
+              <div class="mini-box">計画品質を実装前に固定</div>
+            </div>
+          </article>
+
+          <article class="feature-item reverse fade-in">
+            <div class="glass-card feature-text">
+              <h3>④ 品質ゲート（approve / rework）</h3>
+              <ul>
+                <li>実装完了後、自動でレビュータスク発行</li>
+                <li>6項目チェックリストで判定</li>
+                <li>approve → 完了 / rework → 最大3回ループ</li>
+              </ul>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="mini-box">review → approve</div>
+              <div class="mini-box">or</div>
+              <div class="mini-box">review → rework (max 3)</div>
+            </div>
+          </article>
+
+          <article class="feature-item fade-in">
+            <div class="glass-card feature-text">
+              <h3>⑤ git worktree 連動</h3>
+              <ul>
+                <li><code>yb start --session feature-x</code> で独立 worktree を自動作成</li>
+                <li>並行ブランチで衝突なく同時作業</li>
+                <li><code>yb stop</code> で worktree 自動削除</li>
+              </ul>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="visual-row">
+                <span class="mini-chip">main</span>
+                <span class="mini-chip">feature-a</span>
+                <span class="mini-chip">feature-b</span>
+              </div>
+              <div class="mini-box">session と worktree を1対1管理</div>
+            </div>
+          </article>
+
+          <article class="feature-item reverse fade-in">
+            <div class="glass-card feature-text">
+              <h3>⑥ スキル化 &amp; ペルソナシステム</h3>
+              <ul>
+                <li>反復パターンを <code>SKILL.md</code> としてテンプレート化</li>
+                <li>固定ペルソナ（development / documentation / analysis / other）</li>
+                <li>タスクごとに最適な専門家ペルソナを割当</li>
+              </ul>
+            </div>
+            <div class="glass-card feature-visual">
+              <div class="visual-row">
+                <span class="mini-chip">development</span>
+                <span class="mini-chip">documentation</span>
+                <span class="mini-chip">analysis</span>
+                <span class="mini-chip">other</span>
+              </div>
+              <div class="mini-box">暗黙知を再利用資産へ変換</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="demo">
+      <div class="container">
+        <h2 class="section-title fade-in">デモ / 使い方</h2>
+        <div class="glass-card terminal fade-in">
+          <div class="term-line">$ yb init --repo /path/to/repo</div>
+          <div class="term-line">✓ .yamibaito/ created</div>
+          <div class="term-line">$ yb start</div>
+          <div class="term-line">✓ tmux session created: yamibaito_myrepo / oyabun / waka / 5 workers ready</div>
+          <div class="term-line"># 親分に指示を出す → 若頭が分解 → 若衆が並列実装 → 完了</div>
+          <div class="term-line">$ yb collect</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="stack">
+      <div class="container">
+        <h2 class="section-title fade-in">技術スタック</h2>
+        <div class="stack-grid">
+          <div class="glass-card stack-chip fade-in"><strong>tmux</strong><span>マルチペイン/セッション制御</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="60"><strong>Claude Code</strong><span>親分・若頭エージェント</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="120"><strong>Codex</strong><span>若衆の並列実装</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="180"><strong>git-gtr</strong><span>worktree 連動管理</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="240"><strong>Python</strong><span>検証・収集処理</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="300"><strong>Bash</strong><span>オーケストレーション実行基盤</span></div>
+          <div class="glass-card stack-chip fade-in" data-delay="360"><strong>YAML</strong><span>キュー/レポート/設定の機械可読化</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="summary">
+      <div class="container">
+        <h2 class="section-title fade-in">まとめ + ロードマップ</h2>
+        <p class="section-lead fade-in">
+          Yamibaito Orchestrator は、AI エージェントの協調により大規模実装を自動化する。
+        </p>
+
+        <div class="roadmap">
+          <div class="glass-card phase fade-in"><strong>Phase 1</strong><p>コア機能安定化（現在）</p></div>
+          <div class="glass-card phase fade-in" data-delay="100"><strong>Phase 2</strong><p>Web UI ダッシュボード</p></div>
+          <div class="glass-card phase fade-in" data-delay="200"><strong>Phase 3</strong><p>マルチリポ対応</p></div>
+        </div>
+
+        <footer class="fade-in" data-delay="260">
+          Yamibaito Orchestrator | <a href="../../README.md">Project Link</a>
+        </footer>
+      </div>
+    </section>
+
+    <script>
+      const fadeTargets = ".fade-in, .fade-left, .fade-right";
+      const revealFadeTargets = () => {
+        document.querySelectorAll(fadeTargets).forEach((el) => el.classList.add("visible"));
+      };
+
+      const supportsIntersectionObserver = "IntersectionObserver" in window;
+      if (!supportsIntersectionObserver) {
+        revealFadeTargets();
+      } else {
+        try {
+          const observer = new IntersectionObserver(
+            (entries) => {
+              entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                  const delay = Number(entry.target.dataset.delay || 0);
+                  setTimeout(() => {
+                    entry.target.classList.add("visible");
+                  }, delay);
+                  observer.unobserve(entry.target);
+                }
+              });
+            },
+            { threshold: 0.1 }
+          );
+
+          document.querySelectorAll(fadeTargets).forEach((el) => observer.observe(el));
+        } catch (_error) {
+          revealFadeTargets();
+        }
+      }
+
+      const workflowTrack = document.getElementById("workflowTrack");
+      const workflowSteps = workflowTrack ? Array.from(workflowTrack.querySelectorAll(".workflow-step")) : [];
+
+      if (supportsIntersectionObserver && workflowTrack && workflowSteps.length > 0) {
+        const workflowObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                workflowSteps.forEach((step, idx) => {
+                  setTimeout(() => step.classList.add("active"), idx * 160);
+                });
+                workflowObserver.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.35 }
+        );
+
+        workflowObserver.observe(workflowTrack);
+      }
+    </script>
+  </body>
+</html>

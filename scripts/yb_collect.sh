@@ -569,6 +569,8 @@ def parse_feedback_entries_block(path):
         if current is not None and ":" in stripped:
             k, v = stripped.split(":", 1)
             current[k.strip()] = normalize_text(v)
+        elif current is None and ":" in stripped:
+            continue
         else:
             malformed_count += 1
 

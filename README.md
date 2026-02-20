@@ -1,4 +1,4 @@
-# Kumichou
+# Kumichou Orchestrator
 
 中央オーケストレータ（親分→若頭→若衆）を、各リポジトリから起動できるようにするための仕組み。
 

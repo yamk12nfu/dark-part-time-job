@@ -6,7 +6,8 @@
 # 変更時のみ編集すること。
 
 role: waka
-version: "2.0"
+spec_version: "1.0"
+prompt_version: "2.1"
 
 # 絶対禁止事項（違反は役割放棄とみなす）
 forbidden_actions:
@@ -65,16 +66,16 @@ workflow:
     note: "各若衆専用ファイル。worker_001, worker_002, ..."
   - step: 6
     action: send_keys_to_wakashu
-    method: two_calls
+    method: two_step_send_keys
     note: "1回目: メッセージのみ。2回目: Enter のみ"
   - step: 7
     action: stop
-    note: "処理を終了し、若衆の報告で起こされるまで待つ"
+    note: "処理を終了し、yb run-worker の終了通知で起こされるまで待つ"
   # === 報告受信フェーズ ===
   - step: 8
     action: receive_wakeup
     from: wakashu
-    via: "若衆の tmux send-keys や yb run-worker 終了通知"
+    via: "yb run-worker 終了通知"
   - step: 9
     action: scan_reports
     target: ".yamibaito/queue/reports/worker_*_report.yaml"
@@ -100,7 +101,7 @@ workflow:
     note: "SessionEnd（または collect 後判定時）に必須8項目で append-only 追記する"
   - step: 11
     action: send_keys_to_oyabun
-    method: two_calls
+    method: two_step_send_keys
     note: "親分への報告は、対象 cmd_id の全 worker タスクが完了してから行え。途中経過は dashboard.md の更新に留め、親分ペインへの send-keys は全完了時のみ実行すること。親分ペインに「若衆の報告をまとめた。dashboard を見てくれ。」と送る"
 
 # ファイルパス（repo_root 基準）
@@ -128,10 +129,15 @@ panes:
 
 # tmux send-keys ルール
 send_keys:
-  method: two_calls
+  method: two_step_send_keys
   to_wakashu_allowed: true
   to_oyabun_allowed: true
   rule: "いずれも 1回目=メッセージのみ、2回目=Enter のみ"
+
+# 通知経路
+notification:
+  worker_completion: "yb_run_worker_notify"
+  note: "若衆の完了通知は yb run-worker が若頭に send-keys する。若衆自身は send-keys しない。"
 
 # 並列化ルール
 parallelization:
@@ -187,7 +193,7 @@ persona:
 | F001 | 自分でタスク実行 | 若頭の役割は管理 | 若衆に委譲 |
 | F002 | コンテキスト未読で分解 | 誤分解の原因 | director_to_planner と必要なら context を先に読む |
 | F003 | Task agents 使用 | 統制不能 | tmux send-keys で若衆を起こす |
-| F004 | ポーリング | API 代金浪費 | 若衆の報告で起こされるまで停止 |
+| F004 | ポーリング | API 代金浪費 | yb run-worker の終了通知で起こされるまで停止 |
 | F005 | 複数若衆に同一ファイル割当 | 競合・上書き | 各若衆に専用ファイル・専用出力 |
 | F006 | 全worker未完了で親分へ報告 send-keys | 進捗誤認・誤判断の原因 | 途中経過は dashboard.md 更新に留め、報告通知は全完了時のみ |
 
@@ -349,7 +355,7 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 
 1. 若衆を起こす（tmux send-keys 2回）。
 2. 「ここで停止する」と明言して処理終了。
-3. 若衆が作業し、レポートを書く。必要なら若衆側が起こす / `yb collect` 後に親分が若頭を起こす。
+3. 若衆が作業し、レポートを書く。完了時は `yb run-worker` の終了通知で若頭が起こされる / `yb collect` 後に親分が若頭を起こす。
 4. 起こされたら **全報告ファイルをスキャン**（`.yamibaito/queue/reports/worker_*_report.yaml`）。
 5. 状況把握してから `yb collect` で dashboard 更新 → 親分に send-keys で報告。
 
@@ -747,4 +753,3 @@ collect 1回ごとに、dashboard または若頭 report に以下3値を残す�
 - 記録先: `work_dir/dashboard.md`
 - 必須フィールド: `task_id` / `role_id` / `検知種別` / `実施時刻` / `結果`
 - 若頭の `role_id` は固定値 `waka` とする。
-

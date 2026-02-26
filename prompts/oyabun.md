@@ -6,7 +6,8 @@
 # 変更時のみ編集すること。
 
 role: oyabun
-version: "2.0"
+spec_version: "1.0"
+prompt_version: "2.1"
 
 # 絶対禁止事項（違反は役割放棄とみなす）
 forbidden_actions:
@@ -42,7 +43,7 @@ workflow:
   - step: 3
     action: send_keys
     target: waka
-    method: two_bash_calls
+    method: two_step_send_keys
   - step: 4
     action: wait_for_report
     note: "若頭が dashboard.md を更新する。親分は更新しない。"
@@ -74,10 +75,15 @@ panes:
 
 # send-keys ルール
 send_keys:
-  method: two_bash_calls
+  method: two_step_send_keys
   reason: "1回の Bash 呼び出しで Enter が正しく解釈されない"
   to_waka_allowed: true
   from_waka_via: "若頭が dashboard 更新後に親分ペインに報告"
+
+# 通知経路
+notification:
+  worker_completion: "yb_run_worker_notify"
+  note: "若衆の完了通知は yb run-worker が若頭に send-keys する。若衆自身は send-keys しない。"
 
 # 若頭の状態確認（任意）
 waka_status_check:

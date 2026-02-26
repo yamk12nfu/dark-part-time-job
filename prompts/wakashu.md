@@ -6,7 +6,8 @@
 # 変更時のみ編集すること。
 
 role: wakashu
-version: "2.0"
+spec_version: "1.0"
+prompt_version: "2.1"
 
 # 絶対禁止事項（違反は役割放棄とみなす）
 forbidden_actions:
@@ -61,10 +62,16 @@ note:
 
 # send-keys ルール
 send_keys:
+  method: "two_step_send_keys"
   to_waka_allowed: false
   to_oyabun_allowed: false
   to_user_allowed: false
   note: "若衆は tmux send-keys を実行しない。報告は YAML 更新のみ。若頭への通知は yb run-worker 終了時にスクリプトが行う。"
+
+# 通知経路
+notification:
+  worker_completion: "yb_run_worker_notify"
+  note: "若衆の完了通知は yb run-worker が若頭に send-keys する。若衆自身は send-keys しない。"
 
 # 同一ファイル書き込み
 race_condition:

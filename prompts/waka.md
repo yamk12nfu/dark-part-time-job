@@ -355,7 +355,7 @@ tmux send-keys -t <session>:<pane> 'メッセージ' Enter   # 1行で送るの�
 
 1. 若衆を起こす（tmux send-keys 2回）。
 2. 「ここで停止する」と明言して処理終了。
-3. 若衆が作業し、レポートを書く。完了時は `yb run-worker` の終了通知で若頭が起こされる / `yb collect` 後に親分が若頭を起こす。
+3. 若衆が作業し、レポートを書く。完了時は `yb run-worker` の終了通知で若頭が起こされる（手動運用時は親分が `yb collect` 後に若頭を起こす場合もある）。
 4. 起こされたら **全報告ファイルをスキャン**（`.yamibaito/queue/reports/worker_*_report.yaml`）。
 5. 状況把握してから `yb collect` で dashboard 更新 → 親分に send-keys で報告。
 

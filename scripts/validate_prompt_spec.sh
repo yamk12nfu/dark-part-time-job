@@ -19,7 +19,14 @@ HAS_FAILURE=0
 extract_front_matter() {
   local file_path="$1"
   local out_path="$2"
-  sed -n '/^---$/,/^---$/p' "${file_path}" | sed '1d;$d' > "${out_path}"
+  awk '
+    /^---$/ {
+      delim++
+      if (delim == 1) next
+      if (delim == 2) exit
+    }
+    delim == 1 { print }
+  ' "${file_path}" > "${out_path}"
 }
 
 front_matter_path() {

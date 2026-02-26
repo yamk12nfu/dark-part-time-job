@@ -43,7 +43,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
 > 補足: `dependency-map.md` は 16計画（`improve-plan-mode` を含む）前提だが、本棚卸しは `progress-checklist.md` の15計画を対象に整理した。
 
 ## C. 新規提案
-#### C-1. テスト自動化基盤
+### C-1. テスト自動化基盤
 - **課題**: 自動テスト方針が `policies.tests: none` で、変更時の回帰検知が実運用で効かない。`tests/` ディレクトリは存在せず、bash実行フローのE2Eが未整備。
 - **提案内容**: `scripts/lib/` の単体テストを維持しつつ、`yb_start`→`yb_dispatch`→`yb_run_worker`→`yb_collect` を通す bash E2E（正常系/異常系）を追加する。CI では PR ごとに最小E2Eを自動実行する。
 - **根拠**: `.yamibaito/config.yaml` の `policies.tests: none`（line 11）。`bin/yb` のコマンド一覧に test 系サブコマンドがなく（line 10-21）、`scripts/yb_collect.sh` は品質ゲート集計を行うものの（line 1275-1282）テスト実行ステップ自体は持たない。
@@ -66,7 +66,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 回帰: 既存の `review_result` 集計・`dashboard.md` 生成フォーマットが変更されないことを snapshot 比較で固定化する。
 - **優先度**: High
 
-#### C-2. コスト管理・トークン使用量トラッキング
+### C-2. コスト管理・トークン使用量トラッキング
 - **課題**: 「API 代金の無駄」を禁止している一方で、実測ベースのコスト/トークン可視化がないため、運用上の最適化判断ができない。
 - **提案内容**: workerレポートに `runtime` `model` `input_tokens` `output_tokens` `cost_usd` を追加し、`yb_collect` で cmd/task/worker 単位に集計する。`config.yaml` に予算閾値（例: 日次上限）を追加し、超過時に警告を出す。
 - **根拠**: `.yamibaito/prompts/oyabun.md` の F004 は `reason: "API 代金の無駄"`（line 25-29, 111）。`.yamibaito/feedback/global.md` はテンプレート上 `expected_metric` はあるが（line 19）、既存エントリ（line 30-38）にコスト実績の記録なし。`scripts/yb_collect.sh` の `report_keys`（line 916-935）にもコスト/トークン項目がなく、`.yamibaito/queue/reports/worker_003_report.yaml` も同項目を未保持（line 1-30）。
@@ -89,7 +89,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 回帰: 既存 `worker_XXX_report.yaml` の必須項目と `yb_collect` 既存集計（quality gate/feedback）が破壊されないことを contract test で検証する。
 - **優先度**: High
 
-#### C-3. 通知・外部連携（Slack/Discord/Webhook）
+### C-3. 通知・外部連携（Slack/Discord/Webhook）
 - **課題**: 現在の通知は tmux セッション内のメッセージ送信のみで、セッション外から完了・失敗・要対応を受け取れない。
 - **提案内容**: `YB_NOTIFY_WEBHOOK_URL` を起点に Slack/Discord/Webhook 通知アダプタを追加し、`completed` / `failed` / `rework` / `escalation` 発生時にJSON通知を送る。
 - **security**:
@@ -115,7 +115,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 回帰: 既存 tmux 通知（`worker finished`、`collect complete`）が webhook 未設定時に従来どおり動作することを検証する。
 - **優先度**: Medium
 
-#### C-4. メトリクス・アナリティクス基盤
+### C-4. メトリクス・アナリティクス基盤
 - **課題**: 現状ダッシュボードは件数中心で、リードタイム・再作業率・稼働率などの運用品質指標を継続監視できない。
 - **提案内容**: `events.jsonl` 形式で `assigned` `started` `finished` `reviewed` を記録し、`yb_collect` で `task completion time`、`rework rate`、`worker utilization`、`queue wait time` を算出して `dashboard.md` に追加する。
 - **根拠**: `scripts/yb_collect.sh` はタスク読込で `assigned_at`/`status` を扱う（line 865）一方、完了表示は `finished_at` の生値出力のみ（line 1342）で所要時間計算がない。生成セクションも `品質ゲート` と `feedback` の件数集計中心（line 1275-1296）。README でも `dashboard.md` は `yb collect` で再生成する静的成果物として扱われている（line 65, 104）。
@@ -138,7 +138,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 回帰: 既存の品質ゲート表・feedback 集計・完了一覧フォーマットが維持されることを snapshot で検証する。
 - **優先度**: Medium
 
-#### C-5. マルチリポジトリ協調タスク
+### C-5. マルチリポジトリ協調タスク
 - **課題**: 現状は `--repo` で単一リポジトリのみを実行対象にしており、cross-repo依存タスクを同一セッションで協調実行できない。
 - **提案内容**: `.yamibaito/repos.yaml`（`repo_id`, `path`, `depends_on_repo`）と `yb start/dispatch --repo-set <file>` を追加し、`tasks/*.yaml` に `target_repo` を持たせて repo 間依存を解決しながら配車する。
 - **根拠**:
@@ -163,7 +163,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 正常系（2 repo 依存の自動配車）、異常系（不正 `repo_id`/`path` 脱出/依存欠損の拒否）、回帰（単一 repo 既存フロー維持）を unit/integration/e2e で分担検証。
 - **優先度**: High
 
-#### C-6. CI/CD パイプライン連携
+### C-6. CI/CD パイプライン連携
 - **課題**: `git-gtr` によるローカル worktree 運用はあるが、approve 後に CI で自動検証・マージ・デプロイする経路がない。
 - **提案内容**: `.github/workflows/yb-quality-gate.yml` を追加し、`queue/reports/*_report.yaml` の `review_result: approve` を条件にテスト・品質ゲート・自動マージ判定を実行し、保護ブランチ/デプロイジョブに接続する。
 - **根拠**:
@@ -188,7 +188,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 正常系（approve report で test→gate→merge→deploy 通過）、異常系（`rework`/schema 不正/権限不足で停止）、回帰（ローカル `yb collect` 無影響）を unit/integration/e2e で検証。
 - **優先度**: High
 
-#### C-7. タスク自動スケジューリング（DAGベース）
+### C-7. タスク自動スケジューリング（DAGベース）
 - **課題**: 依存関係は手動資料と静的検証に留まり、実行時に `depends_on` を解決して自動で配車する仕組みがない。
 - **提案内容**: `yb dispatch` に DAG スケジューラを実装し、`tasks.yaml` の依存グラフから「依存解決済みタスクのみ」を ready queue 化して空き worker へ自動割当する。完了時に後続ノードを自動解放する。
 - **根拠**:
@@ -213,7 +213,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 正常系（トポロジカル順の配車）、異常系（循環/欠損依存・競合更新の安全停止）、回帰（依存なしタスクの FIFO 相当維持）を unit/integration/e2e で検証。
 - **優先度**: High
 
-#### C-8. ロールバック & git リカバリ自動化
+### C-8. ロールバック & git リカバリ自動化
 - **課題**: rework 時の git 状態復帰は手動運用で、失敗時も「手動で確認」にフォールバックするため、復旧速度と安全性が担当者依存になっている。
 - **提案内容**: `yb recover`（`--task <id> --mode soft|hard`）を追加し、タスク開始時スナップショット（tag/patch）から自動復旧できるようにする。`review_result: rework` で復旧候補を提示し、承認後に自動適用する。
 - **根拠**:
@@ -239,7 +239,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   - 正常系（`soft`/`hard` で期待状態へ復旧）、異常系（snapshot 欠損/権限不足/競合差分で circuit break）、回帰（`yb restart/stop` 継続利用）を unit/integration/e2e で検証。
 - **優先度**: Medium
 
-#### C-9. Web ダッシュボード（リアルタイム可視化）
+### C-9. Web ダッシュボード（リアルタイム可視化）
 - **課題**: `dashboard.md` は Markdown の静的スナップショットで、`yb collect` 実行時のみ更新される。
   検索・複合フィルタ・複数セッション横断の即時監視が運用上ほぼ不可能。
 - **提案内容**: `.yamibaito/state/dashboard*.json` を正本にした Web UI（SSE/ポーリング更新）を導入し、`status`/`worker`/`task_id`/`priority`/`session` で絞り込み可能にする。
@@ -260,7 +260,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   併せて query validator の allowlist/regex を unit で固定化し、入力仕様の退行を防ぐ。
 - **優先度**: High
 
-#### C-10. ドキュメント自動生成の拡張
+### C-10. ドキュメント自動生成の拡張
 - **課題**: Living Spec は `approve` 連動更新を定義しているが、API ドキュメント生成や配布向け変更ログ自動生成は対象外。
   仕様ドキュメント更新と実装差分追随が reviewer の手作業に依存する。
 - **提案内容**: `approve` 後フックに「API 仕様抽出 + 変更ログ生成」ジョブを追加し、`.yamibaito/spec/` 更新に加えて配布用ドキュメントを自動生成する。
@@ -281,7 +281,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   生成テンプレートの境界ケース（空差分/大量差分）は unit 相当の fixture テストで継続監視する。
 - **優先度**: Medium
 
-#### C-11. セキュリティ監査の自動化
+### C-11. セキュリティ監査の自動化
 - **課題**: レビュー観点に `security_alignment` はあるが、静的解析やシークレット検査の自動実行経路がない。
   セキュリティ判定がレビューコメントの主観依存になり、再現性が弱い。
 - **提案内容**: `yb security audit` を追加し、最低限 `gitleaks`（秘密情報）+ `semgrep`（コードパターン）+ 依存脆弱性スキャンを一括実行する。
@@ -302,7 +302,7 @@ Phase 1 の基盤修正は3件完了しており、Phase 2 以降は着手待ち
   さらに severity 正規化ロジックは unit テストで固定し、ツール更新時の判定ブレを抑止する。
 - **優先度**: High
 
-#### C-12. プラグイン・拡張アーキテクチャ
+### C-12. プラグイン・拡張アーキテクチャ
 - **課題**: 新機能追加は `bin/yb` の case 分岐と `scripts/` 直編集が前提で、拡張点が明文化されていない。
   外部コントリビュータが機能追加する際に本体改修と競合解消が必須になる。
 - **提案内容**: `plugins.d` 方式を導入し、`plugin.yaml`（command, hooks, permissions）を読み込んで `yb` サブコマンドを動的登録する。

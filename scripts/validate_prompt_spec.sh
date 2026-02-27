@@ -20,12 +20,19 @@ extract_front_matter() {
   local file_path="$1"
   local out_path="$2"
   awk '
-    /^---$/ {
-      delim++
-      if (delim == 1) next
-      if (delim == 2) exit
+    NR == 1 {
+      if ($0 != "---") exit 0
+      in_fm = 1
+      next
     }
-    delim == 1 { print }
+    in_fm && /^---$/ {
+      closed = 1
+      exit 0
+    }
+    in_fm { print }
+    END {
+      if (in_fm && !closed) exit 1
+    }
   ' "${file_path}" > "${out_path}"
 }
 

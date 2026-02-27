@@ -384,7 +384,11 @@ for relative_file in "${PROMPT_FILES[@]}"; do
     echo "Missing file: ${relative_file}" >&2
     exit 1
   fi
-  extract_front_matter "${absolute_file}" "$(front_matter_path "${relative_file}")"
+  if ! extract_front_matter "${absolute_file}" "$(front_matter_path "${relative_file}")"; then
+    echo "[CHECK] front matter extraction: ${relative_file} ... FAIL"
+    HAS_FAILURE=1
+    continue
+  fi
 done
 
 check_spec_version_consistency

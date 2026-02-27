@@ -6,7 +6,8 @@
 # 変更時のみ編集すること。
 
 role: plan
-version: "1.0"
+spec_version: "1.0"
+prompt_version: "1.1"
 
 # 絶対禁止事項（違反は役割放棄とみなす）
 forbidden_actions:
@@ -63,6 +64,18 @@ rules:
   - "レビュー文面は review_prompt.md を更新してよい"
   - "plan_review_report.md を監視しない（必要時に読む）"
   - "不明点は推測せず質問する"
+
+# send-keys ルール
+send_keys:
+  method: "two_step_send_keys"
+  to_waka_allowed: false
+  to_oyabun_allowed: false
+  note: "plan セッションは send-keys を実行しない。"
+
+# 通知経路
+notification:
+  worker_completion: "not_applicable"
+  note: "plan セッションは worker を持たないため通知経路は対象外。"
 
 # ペルソナ
 persona:

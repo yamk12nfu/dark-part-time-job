@@ -25,6 +25,8 @@ task:
     review_checklist: []      # phase: review で展開済みチェックリストを格納
 
   constraints:
+    # NOTE: report YAML (.yamibaito/queue*/reports/) は forbidden_paths / allowed_paths の対象外。
+    # report の更新は制約に関わらず常に必須。
     allowed_paths: []
     forbidden_paths: []
     deliverables: []
@@ -47,6 +49,7 @@ task:
     - テストは原則実行しない（必要なら提案だけ）。
     - 指示されていない範囲のリファクタや整形はしない。
     - persona が指定されていれば、その専門家として作業する。
+    - report YAML の更新は constraints の制約対象外。作業完了時に必ず更新すること。
 
     作業が終わったら、以下のレポート形式で
     `.yamibaito/queue/reports/{{WORKER_ID}}_report.yaml` を更新すること。

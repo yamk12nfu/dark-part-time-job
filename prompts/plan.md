@@ -25,7 +25,7 @@ forbidden_actions:
     use_instead: "必要なタイミングで読み直す"
   - id: F003
     action: ignore_review_feedback
-    description: "Codexレビュー指摘を無視"
+    description: "LLMレビュー指摘を無視"
   - id: F004
     action: edit_outside_plan_dir
     description: "planディレクトリ外の編集"
@@ -118,4 +118,4 @@ persona:
 
 ## plan-review
 ユーザーが `plan-review` と入力したら、`yb plan-review` を実行して
-静的検査 + Codex レビューを依頼し、指摘を反映する。
+静的検査 + LLM レビューを依頼し、指摘を反映する。

@@ -3,6 +3,7 @@ set -euo pipefail
 
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ORCH_ROOT/scripts/yb_prompt_lib.sh"
+source "$ORCH_ROOT/scripts/lib/agent_config_shell.sh"
 
 repo_root="."
 session_id=""
@@ -48,10 +49,19 @@ if [ ! -f "$config_file" ]; then
   exit 1
 fi
 
-worker_count=$(grep -E "^\\s*codex_count:" "$config_file" | awk '{print $2}')
+worker_count=$(agent_get_worker_count "$config_file")
 if [ -z "$worker_count" ]; then
   worker_count=3
 fi
+
+# CLI binary preflight check
+for _check_role in oyabun waka worker; do
+  _cli_bin=$(agent_get_cli_binary "$config_file" "$_check_role")
+  if [ -n "$_cli_bin" ] && ! command -v "$_cli_bin" &>/dev/null; then
+    echo "ERROR: '$_cli_bin' が見つかりません。agents.$_check_role.cli で指定されたCLIをインストールしてください。" >&2
+    exit 1
+  fi
+done
 
 # === worktree 設定の読み取り ===
 wt_enabled=$(grep -E "^\s*enabled:" "$config_file" | head -1 | awk '{print $2}' || true)
@@ -342,14 +352,24 @@ with open(path, "r", encoding="utf-8") as f:
 PY
 )
 
-tmux send-keys -t "$session_name:$oyabun_pane" "claude --dangerously-skip-permissions" C-m
+_oyabun_cmd=$(agent_get_command "$config_file" "oyabun")
+_waka_cmd=$(agent_get_command "$config_file" "waka")
+tmux send-keys -t "$session_name:$oyabun_pane" "$_oyabun_cmd" C-m
 sleep 2
-tmux send-keys -t "$session_name:$waka_pane" "claude --dangerously-skip-permissions" C-m
+tmux send-keys -t "$session_name:$waka_pane" "$_waka_cmd" C-m
 
 sleep 5
-tmux send-keys -t "$session_name:$oyabun_pane" "Please read file: \"$oyabun_prompt\" and follow it. You are the oyabun." C-m
+_oyabun_mode=$(agent_get_mode "$config_file" "oyabun")
+_waka_mode=$(agent_get_mode "$config_file" "waka")
+if [ "$_oyabun_mode" = "interactive" ]; then
+  _oyabun_msg=$(agent_get_initial_message "$config_file" "oyabun" "$oyabun_prompt" "oyabun")
+  tmux send-keys -t "$session_name:$oyabun_pane" "$_oyabun_msg" C-m
+fi
 sleep 2
-tmux send-keys -t "$session_name:$waka_pane" "Please read file: \"$waka_prompt\" and follow it. You are the waka." C-m
+if [ "$_waka_mode" = "interactive" ]; then
+  _waka_msg=$(agent_get_initial_message "$config_file" "waka" "$waka_prompt" "waka")
+  tmux send-keys -t "$session_name:$waka_pane" "$_waka_msg" C-m
+fi
 
 echo "yb start: tmux session created: $session_name"
 echo "Attach with: tmux attach -t $session_name"

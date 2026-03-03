@@ -3,6 +3,7 @@ set -euo pipefail
 
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ORCH_ROOT/scripts/yb_prompt_lib.sh"
+source "$ORCH_ROOT/scripts/lib/agent_config_shell.sh"
 
 repo_root="."
 title=""
@@ -79,23 +80,26 @@ fi
 plan_prompt="$(resolve_prompt_path "$repo_root" "plan.md")" || { echo "ERROR: plan.md not found in $repo_root/.yamibaito/prompts/" >&2; exit 1; }
 
 tmux new-session -d -s "$session_name" -n plan
-# Split a small bottom pane for Codex.
+# Split a small bottom pane for review CLI.
 tmux split-window -v -p 20 -t "$session_name":0
 tmux select-pane -t "$session_name":0.0 -T "plan"
-tmux select-pane -t "$session_name":0.1 -T "codex"
+_review_cli_name=$(agent_get_cli_binary "$config_file" "plan_review")
+tmux select-pane -t "$session_name":0.1 -T "${_review_cli_name:-review}"
 
 cat > "$plan_dir/panes.json" <<EOF
-{"session":"$session_name","plan":"0.0","codex":"0.1"}
+{"session":"$session_name","plan":"0.0","review":"0.1"}
 EOF
 
 tmux send-keys -t "$session_name":0.0 "export PATH=\"$ORCH_ROOT/bin:\$PATH\" YB_PLAN_REPO=\"$repo_root\" YB_PLAN_DIR=\"$plan_dir\" && cd \"$repo_root\" && clear" C-m
 tmux send-keys -t "$session_name":0.1 "export PATH=\"$ORCH_ROOT/bin:\$PATH\" YB_PLAN_REPO=\"$repo_root\" YB_PLAN_DIR=\"$plan_dir\" && cd \"$repo_root\" && clear" C-m
-tmux send-keys -t "$session_name":0.0 "claude --dangerously-skip-permissions" C-m
+_plan_cmd=$(agent_get_command "$config_file" "plan")
+tmux send-keys -t "$session_name":0.0 "$_plan_cmd" C-m
 tmux send-keys -t "$session_name":0.1 "echo \"Run: yb plan-review\" && echo \"(writes: $plan_dir/plan_review_report.md)\"" C-m
 sleep 2
-tmux send-keys -t "$session_name":0.0 "Please read file: \"$plan_prompt\" and follow it. You are the planner." C-m
+_plan_msg=$(agent_get_initial_message "$config_file" "plan" "$plan_prompt" "planner")
+tmux send-keys -t "$session_name":0.0 "$_plan_msg" C-m
 sleep 2
-tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for Codex review, plan_review_report.md is for Codex review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"plan-review\", run: yb plan-review." C-m
+tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for LLM review, plan_review_report.md is for Codex review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"plan-review\", run: yb plan-review." C-m
 
 echo "yb plan: plan dir created at $plan_dir"
 echo "yb plan: tmux session created: $session_name"

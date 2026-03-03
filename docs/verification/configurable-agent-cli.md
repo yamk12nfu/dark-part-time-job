@@ -19,7 +19,7 @@
 python3 scripts/lib/test_agent_config.py -v
 ```
 
-**期待結果**: 18件全PASS
+**期待結果**: 22件全PASS
 
 ---
 
@@ -30,7 +30,6 @@ python3 scripts/lib/test_agent_config.py -v
 #### 2-1. 後方互換（agents: セクションなし）
 
 ```bash
-# agents: なしの旧config相当を作成
 cat > /tmp/test_config_legacy.yaml <<'YAML'
 workers:
   codex_count: 5
@@ -39,25 +38,18 @@ codex:
   model: high
 YAML
 
-# 各ロールの解決結果を確認
-for role in oyabun waka worker plan plan_review; do
-  echo "--- $role ---"
-  python3 scripts/lib/_agent_config_cli.py \
-    --config /tmp/test_config_legacy.yaml --role "$role" --field command
-  python3 scripts/lib/_agent_config_cli.py \
-    --config /tmp/test_config_legacy.yaml --role "$role" --field mode
-done
+for role in oyabun waka worker plan plan_review; do echo "$role: $(python3 scripts/lib/_agent_config_cli.py --config /tmp/test_config_legacy.yaml --role $role --field command)"; done
 ```
 
 **期待結果**:
 
-| ロール | command | mode |
-|--------|---------|------|
-| oyabun | `claude --dangerously-skip-permissions` | interactive |
-| waka | `claude --dangerously-skip-permissions` | interactive |
-| worker | `codex exec --sandbox workspace-write -` | batch_stdin |
-| plan | `claude --dangerously-skip-permissions` | interactive |
-| plan_review | `codex exec --sandbox workspace-write -` | batch_stdin |
+| ロール | command |
+|--------|---------|
+| oyabun | `claude --dangerously-skip-permissions` |
+| waka | `claude --dangerously-skip-permissions` |
+| worker | `codex exec --sandbox workspace-write -` |
+| plan | `claude --dangerously-skip-permissions` |
+| plan_review | `codex exec --sandbox workspace-write -` |
 
 #### 2-2. 部分指定フォールバック（oyabun だけ gemini）
 
@@ -73,11 +65,7 @@ agents:
     cli: gemini
 YAML
 
-for role in oyabun waka worker plan plan_review; do
-  echo "--- $role ---"
-  python3 scripts/lib/_agent_config_cli.py \
-    --config /tmp/test_config_partial.yaml --role "$role" --field command
-done
+for role in oyabun waka worker plan plan_review; do echo "$role: $(python3 scripts/lib/_agent_config_cli.py --config /tmp/test_config_partial.yaml --role $role --field command)"; done
 ```
 
 **期待結果**:
@@ -90,47 +78,12 @@ done
 | plan | `claude --dangerously-skip-permissions`（デフォルト） |
 | plan_review | `codex exec --sandbox workspace-write -`（デフォルト） |
 
-#### 2-3. Copilot プリセット
+#### 2-3. 全プリセット interactive/batch 一括確認（必須）
+
+全4プリセットの interactive（oyabun）と batch（worker）が正しく分岐するか確認する。
 
 ```bash
-cat > /tmp/test_config_copilot.yaml <<'YAML'
-workers:
-  count: 5
-agents:
-  oyabun:
-    cli: copilot
-  worker:
-    cli: copilot
-YAML
-
-echo "--- oyabun (interactive) ---"
-python3 scripts/lib/_agent_config_cli.py \
-  --config /tmp/test_config_copilot.yaml --role oyabun --field command
-
-echo "--- worker (batch) ---"
-python3 scripts/lib/_agent_config_cli.py \
-  --config /tmp/test_config_copilot.yaml --role worker --field command
-```
-
-**期待結果**:
-- oyabun → `copilot --autopilot`
-- worker → `copilot`
-
-#### 2-4. 全プリセット一括確認
-
-```bash
-for cli in claude gemini codex copilot; do
-  cat > /tmp/test_config_${cli}.yaml <<YAML
-agents:
-  oyabun:
-    cli: ${cli}
-  worker:
-    cli: ${cli}
-YAML
-  echo "=== ${cli} ==="
-  echo "  oyabun:  $(python3 scripts/lib/_agent_config_cli.py --config /tmp/test_config_${cli}.yaml --role oyabun --field command)"
-  echo "  worker:  $(python3 scripts/lib/_agent_config_cli.py --config /tmp/test_config_${cli}.yaml --role worker --field command)"
-done
+for cli in claude gemini codex copilot; do echo "=== $cli ==="; echo "  oyabun: $(python3 scripts/lib/_agent_config_cli.py --config <(echo -e "agents:\n  oyabun:\n    cli: $cli\n  worker:\n    cli: $cli") --role oyabun --field command)"; echo "  worker: $(python3 scripts/lib/_agent_config_cli.py --config <(echo -e "agents:\n  oyabun:\n    cli: $cli\n  worker:\n    cli: $cli") --role worker --field command)"; done
 ```
 
 **期待結果**:
@@ -139,7 +92,7 @@ done
 |-----------|---------------------|----------------|
 | claude | `claude --dangerously-skip-permissions` | `claude --dangerously-skip-permissions` |
 | gemini | `gemini --yolo` | `gemini` |
-| codex | `codex exec --sandbox workspace-write -` | `codex exec --sandbox workspace-write -` |
+| codex | `codex --approval-mode full-auto` | `codex exec --sandbox workspace-write -` |
 | copilot | `copilot --autopilot` | `copilot` |
 
 ---
@@ -170,14 +123,7 @@ python3 scripts/lib/_agent_config_cli.py --config /tmp/test_wc2.yaml --role work
 ### 4. CLIバイナリ名の抽出確認（推奨）
 
 ```bash
-for cli in claude gemini codex copilot; do
-  cat > /tmp/test_bin_${cli}.yaml <<YAML
-agents:
-  oyabun:
-    cli: ${cli}
-YAML
-  echo "${cli}: $(python3 scripts/lib/_agent_config_cli.py --config /tmp/test_bin_${cli}.yaml --role oyabun --field cli_binary)"
-done
+for cli in claude gemini codex copilot; do echo "$cli: $(python3 scripts/lib/_agent_config_cli.py --config <(echo -e "agents:\n  oyabun:\n    cli: $cli") --role oyabun --field cli_binary)"; done
 ```
 
 **期待結果**: `claude`, `gemini`, `codex`, `copilot` がそれぞれ返る（`command -v` チェック用のバイナリ名）。
@@ -250,7 +196,9 @@ yb run-worker --worker worker_001 --session <session-id>
 | 優先度 | 手順 | 実施環境 | 所要時間 |
 |--------|------|----------|----------|
 | **必須** | 1. ユニットテスト | worktree | 1分 |
-| **必須** | 2. CLI ラッパーで設定解決 | worktree | 3分 |
+| **必須** | 2-1. 後方互換 | worktree | 1分 |
+| **必須** | 2-2. 部分指定フォールバック | worktree | 1分 |
+| **必須** | 2-3. 全プリセット一括確認 | worktree | 1分 |
 | **推奨** | 3. worker_count 解決 | worktree | 1分 |
 | **推奨** | 4. CLIバイナリ名抽出 | worktree | 1分 |
 | **推奨** | 5. シェルラッパー | worktree | 1分 |

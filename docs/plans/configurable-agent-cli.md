@@ -68,7 +68,7 @@ agents:
 |-----------|-------------------|----------------------|------|
 | `claude` | `claude --dangerously-skip-permissions` | `claude --dangerously-skip-permissions` | `interactive` |
 | `gemini` | `gemini --yolo` | `gemini` | `interactive` |
-| `codex` | (なし) | `codex exec --sandbox {sandbox} -` | `batch_stdin` |
+| `codex` | `codex --approval-mode full-auto` | `codex exec --sandbox {sandbox} -` | `batch_stdin` |
 | `copilot` | `copilot --autopilot` | `copilot` | `interactive` |
 
 - oyabun/waka/plan はプリセットの `interactive` コマンドを使用（tmux send-keys で起動）

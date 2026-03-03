@@ -22,6 +22,7 @@ CLI_PRESETS = {
         "mode": "interactive",
     },
     "codex": {
+        "interactive_command": "codex --approval-mode full-auto",
         "batch_command": "codex exec --sandbox {sandbox} -",
         "mode": "batch_stdin",
     },
@@ -284,6 +285,11 @@ def load_agent_config(config_path: str, role: str) -> dict:
             model = _WORKER_DEFAULTS["model"]
         if _is_missing(web_search):
             web_search = _WORKER_DEFAULTS["web_search"]
+
+    # 全ロール共通の sandbox フォールバック
+    # コマンドテンプレートに {sandbox} が含まれるケースに対応
+    if _is_missing(sandbox):
+        sandbox = top_level_codex.get("sandbox") or _WORKER_DEFAULTS["sandbox"]
 
     web_search = _coerce_bool(web_search)
 

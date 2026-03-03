@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent_config import (
     CLI_PRESETS,
     LEGACY_DEFAULTS,
+    _is_missing,
     build_initial_message,
     build_launch_command,
     get_cli_binary,
@@ -429,6 +430,48 @@ class TestAgentConfig(unittest.TestCase):
         claude_cmd = build_launch_command(claude_cfg)
         self.assertIsInstance(claude_cmd, list)
         self.assertTrue(all(isinstance(part, str) for part in claude_cmd))
+
+    def test_is_missing_empty_dict(self):
+        self.assertTrue(_is_missing({}))
+
+    def test_is_missing_empty_list(self):
+        self.assertTrue(_is_missing([]))
+
+    def test_is_missing_non_empty_dict(self):
+        self.assertFalse(_is_missing({"k": 1}))
+
+    def test_is_missing_non_empty_list(self):
+        self.assertFalse(_is_missing([1]))
+
+    def test_is_missing_non_empty_tuple(self):
+        self.assertFalse(_is_missing((1,)))
+
+    def test_is_missing_non_empty_set(self):
+        self.assertFalse(_is_missing({1}))
+
+    def test_is_missing_empty_tuple(self):
+        self.assertTrue(_is_missing(()))
+
+    def test_is_missing_empty_set(self):
+        self.assertTrue(_is_missing(set()))
+
+    def test_worker_sandbox_empty_value_falls_back(self):
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+                sandbox:
+            codex:
+              sandbox: workspace-write
+            """
+        )
+        cfg = load_agent_config(path, "worker")
+        self.assertEqual(cfg.get("sandbox"), "workspace-write")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["codex", "exec", "--sandbox", "workspace-write", "-"],
+        )
 
 
 if __name__ == "__main__":

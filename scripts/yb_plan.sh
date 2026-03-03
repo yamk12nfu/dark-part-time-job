@@ -99,7 +99,7 @@ sleep 2
 _plan_msg=$(agent_get_initial_message "$config_file" "plan" "$plan_prompt" "planner")
 tmux send-keys -t "$session_name":0.0 "$_plan_msg" C-m
 sleep 2
-tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for LLM review, plan_review_report.md is for Codex review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"plan-review\", run: yb plan-review." C-m
+tmux send-keys -t "$session_name":0.0 "Plan directory: \"$plan_dir\". Use PRD.md for product requirements, SPEC.md for implementation design, tasks.yaml for machine-readable task definitions. review_prompt.md is for LLM review, plan_review_report.md is for LLM review output. Plan is complete only when all 3 files (PRD.md, SPEC.md, tasks.yaml) are filled. When the user types \"plan-review\", run: yb plan-review." C-m
 
 echo "yb plan: plan dir created at $plan_dir"
 echo "yb plan: tmux session created: $session_name"

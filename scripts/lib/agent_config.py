@@ -191,7 +191,13 @@ def _clean_text(value: Any) -> str:
 
 
 def _is_missing(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (dict, list, tuple, set)):
+        return len(value) == 0
+    return False
 
 
 def _coerce_bool(value: Any) -> Any:

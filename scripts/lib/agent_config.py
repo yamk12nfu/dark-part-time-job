@@ -22,7 +22,7 @@ CLI_PRESETS = {
         "mode": "interactive",
     },
     "codex": {
-        "interactive_command": "codex --approval-mode full-auto",
+        "interactive_command": "codex --dangerously-bypass-approvals-and-sandbox",
         "batch_command": "codex exec --sandbox {sandbox} -",
         "mode": "batch_stdin",
     },

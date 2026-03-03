@@ -92,7 +92,7 @@ for cli in claude gemini codex copilot; do echo "=== $cli ==="; echo "  oyabun: 
 |-----------|---------------------|----------------|
 | claude | `claude --dangerously-skip-permissions` | `claude --dangerously-skip-permissions` |
 | gemini | `gemini --yolo` | `gemini` |
-| codex | `codex --approval-mode full-auto` | `codex exec --sandbox workspace-write -` |
+| codex | `codex --dangerously-bypass-approvals-and-sandbox` | `codex exec --sandbox workspace-write -` |
 | copilot | `copilot --autopilot` | `copilot` |
 
 ---

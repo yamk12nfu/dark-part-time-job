@@ -308,8 +308,8 @@ class TestAgentConfig(unittest.TestCase):
         oyabun_cfg = load_agent_config(path, "oyabun")
 
         self.assertEqual(oyabun_cfg.get("mode"), "interactive")
-        self.assertEqual(oyabun_cfg.get("command"), "codex --approval-mode full-auto")
-        self.assertEqual(build_launch_command(oyabun_cfg), ["codex", "--approval-mode", "full-auto"])
+        self.assertEqual(oyabun_cfg.get("command"), "codex --dangerously-bypass-approvals-and-sandbox")
+        self.assertEqual(build_launch_command(oyabun_cfg), ["codex", "--dangerously-bypass-approvals-and-sandbox"])
 
     def test_worker_codex_returns_batch_command(self):
         path = self._write_temp_config(
@@ -339,7 +339,7 @@ class TestAgentConfig(unittest.TestCase):
         oyabun_cfg = load_agent_config(path, "oyabun")
 
         cmd = build_launch_command(oyabun_cfg)
-        self.assertEqual(cmd, ["codex", "--approval-mode", "full-auto"])
+        self.assertEqual(cmd, ["codex", "--dangerously-bypass-approvals-and-sandbox"])
 
     def test_waka_codex_sandbox_resolved(self):
         path = self._write_temp_config(
@@ -352,7 +352,7 @@ class TestAgentConfig(unittest.TestCase):
         waka_cfg = load_agent_config(path, "waka")
 
         cmd = build_launch_command(waka_cfg)
-        self.assertEqual(cmd, ["codex", "--approval-mode", "full-auto"])
+        self.assertEqual(cmd, ["codex", "--dangerously-bypass-approvals-and-sandbox"])
 
     def test_lightweight_parser_edge_cases(self):
         path = self._write_temp_config(

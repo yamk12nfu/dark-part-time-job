@@ -35,13 +35,15 @@
 agents:
   oyabun:
     cli: claude          # claude | gemini | codex | custom
+    # model: opus        # optional: --model opus を CLI に渡す
   waka:
     cli: claude
+    # model: sonnet      # optional: --model sonnet を CLI に渡す
   worker:
     cli: codex
     sandbox: workspace-write
     approval: on-request
-    model: high
+    # model: o3          # optional: --model o3 を CLI に渡す（未指定時は CLI デフォルト）
     web_search: false
   plan:
     cli: claude
@@ -49,6 +51,7 @@ agents:
     cli: codex
   # review:              # 未設定時は worker と同じ CLI を使用
   #   cli: claude        # 実装と別の CLI でクロスレビュー
+  #   model: sonnet      # レビュー用に別モデルを指定可能
 ```
 
 **ISSUE-06 対応**: `options` 階層を廃止し、worker固有設定はロール直下にフラット配置。
@@ -78,6 +81,22 @@ agents:
 - ロールごとにどちらを使うかは `agent_config.py` が自動判定
 - initial_message（interactive 用）: `Please read file: "{prompt_path}" and follow it. You are the {role}.`
 
+### per-role model 指定
+
+`agents.<role>.model` に CLI モデル名を指定すると、`build_launch_command()` が
+`--model <value>` を CLI コマンドに自動注入する。
+
+| 値 | 注入 | 例 |
+|----|------|----|
+| `"opus"`, `"o3"` 等 | する | `--model opus` |
+| `"default"` | しない | CLI デフォルトを使用 |
+| 未設定 / `""` | しない | CLI デフォルトを使用 |
+
+**codex batch コマンドの場合**: stdin マーカー `-` の前に `--model` を挿入。
+例: `codex exec --sandbox workspace-write --model o3 -`
+
+**Post-injection 方式**: コマンドテンプレートではなく `shlex.split()` 後のトークンリストに動的注入。
+
 ### 後方互換性
 
 - `agents:` セクションが存在しない場合 → 現在と100%同一動作（claude + codex）
@@ -87,6 +106,8 @@ agents:
 - `workers.codex_count` → `workers.count` の新キーを優先、旧キーもフォールバックで読む
 - `codex:` トップレベルセクション → `agents.worker` の sandbox/model 等が未指定の場合のフォールバック
 - `agents.review` が未設定の場合 → `agents.worker` の設定にフォールバック（現行と100%同一動作）
+- model 未設定 → `--model` フラグなし（変更なし）
+- `model: default` → `--model` 注入しない（後方互換）
 
 ### CLIバイナリ事前チェック（Q4 対応）
 

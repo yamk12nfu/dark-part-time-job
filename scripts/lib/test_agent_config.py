@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agent_config import (
     CLI_PRESETS,
     LEGACY_DEFAULTS,
+    _should_inject_model,
     _is_missing,
     build_initial_message,
     build_launch_command,
@@ -535,6 +536,155 @@ class TestAgentConfig(unittest.TestCase):
         cfg = load_agent_config(path, "review")
         self.assertEqual(cfg.get("sandbox"), "workspace-write")
         self.assertEqual(cfg.get("model"), "high")
+
+    def test_model_injection_codex_worker(self):
+        """codex worker では --model が stdin マーカー直前に挿入される。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+                model: o3
+            """
+        )
+        cfg = load_agent_config(path, "worker")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["codex", "exec", "--sandbox", "workspace-write", "--model", "o3", "-"],
+        )
+
+    def test_model_injection_claude_oyabun(self):
+        """claude oyabun では --model が末尾に追加される。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              oyabun:
+                cli: claude
+                model: opus
+            """
+        )
+        cfg = load_agent_config(path, "oyabun")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["claude", "--dangerously-skip-permissions", "--model", "opus"],
+        )
+
+    def test_model_default_no_injection(self):
+        """model=default は注入されない。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+            codex:
+              model: default
+            """
+        )
+        cfg = load_agent_config(path, "worker")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["codex", "exec", "--sandbox", "workspace-write", "-"],
+        )
+
+    def test_model_empty_no_injection(self):
+        """model 未設定時は注入されない。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              oyabun:
+                cli: claude
+            """
+        )
+        cfg = load_agent_config(path, "oyabun")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["claude", "--dangerously-skip-permissions"],
+        )
+
+    def test_model_injection_gemini(self):
+        """gemini でも --model が末尾に追加される。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              oyabun:
+                cli: gemini
+                model: gemini-2.0-flash
+            """
+        )
+        cfg = load_agent_config(path, "oyabun")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["gemini", "--yolo", "--model", "gemini-2.0-flash"],
+        )
+
+    def test_model_kwarg_override(self):
+        """kwargs の model は agent_cfg の model より優先される。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+                model: o3
+            """
+        )
+        cfg = load_agent_config(path, "worker")
+        self.assertEqual(
+            build_launch_command(cfg, model="o4-mini"),
+            ["codex", "exec", "--sandbox", "workspace-write", "--model", "o4-mini", "-"],
+        )
+
+    def test_model_injection_review_role(self):
+        """review ロールの model 指定も注入対象となる。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              review:
+                cli: claude
+                model: sonnet
+            codex:
+              sandbox: workspace-write
+              model: default
+            """
+        )
+        cfg = load_agent_config(path, "review")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["claude", "--dangerously-skip-permissions", "--model", "sonnet"],
+        )
+
+    def test_model_injection_custom_cli(self):
+        """custom CLI でも stdin マーカー直前に --model を挿入する。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: custom
+                command: "my-tool run -"
+                mode: batch_stdin
+                model: o3
+            """
+        )
+        cfg = load_agent_config(path, "worker")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["my-tool", "run", "--model", "o3", "-"],
+        )
+
+    def test_model_injection_copilot(self):
+        """copilot でも --model が末尾に追加される。"""
+        path = self._write_temp_config(
+            """
+            agents:
+              oyabun:
+                cli: copilot
+                model: gpt-4o
+            """
+        )
+        cfg = load_agent_config(path, "oyabun")
+        self.assertEqual(
+            build_launch_command(cfg),
+            ["copilot", "--autopilot", "--model", "gpt-4o"],
+        )
 
 
 if __name__ == "__main__":

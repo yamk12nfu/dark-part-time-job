@@ -15,21 +15,25 @@ CLI_PRESETS = {
         "interactive_command": "claude --dangerously-skip-permissions",
         "batch_command": "claude --dangerously-skip-permissions",
         "mode": "interactive",
+        "model_flag": "--model",
     },
     "gemini": {
         "interactive_command": "gemini --yolo",
         "batch_command": "gemini",
         "mode": "interactive",
+        "model_flag": "--model",
     },
     "codex": {
         "interactive_command": "codex --dangerously-bypass-approvals-and-sandbox",
         "batch_command": "codex exec --sandbox {sandbox} -",
         "mode": "batch_stdin",
+        "model_flag": "--model",
     },
     "copilot": {
         "interactive_command": "copilot --autopilot",
         "batch_command": "copilot",
         "mode": "interactive",
+        "model_flag": "--model",
     },
 }
 
@@ -52,6 +56,13 @@ _WORKER_DEFAULTS = {
     "model": "default",
     "web_search": False,
 }
+
+
+def _should_inject_model(model: Any) -> bool:
+    if _is_missing(model):
+        return False
+    model_str = str(model).strip().lower()
+    return model_str not in ("", "default")
 
 
 def _warn(message: str) -> None:
@@ -304,6 +315,12 @@ def load_agent_config(config_path: str, role: str) -> dict:
 
     web_search = _coerce_bool(web_search)
 
+    if cli == "custom":
+        model_flag = _clean_text(role_cfg.get("model_flag")) or "--model"
+    else:
+        preset = CLI_PRESETS.get(cli, {})
+        model_flag = preset.get("model_flag", "--model")
+
     return {
         "cli": cli,
         "command": command,
@@ -312,6 +329,7 @@ def load_agent_config(config_path: str, role: str) -> dict:
         "sandbox": sandbox,
         "approval": approval,
         "model": model,
+        "model_flag": model_flag,
         "web_search": web_search,
     }
 
@@ -351,7 +369,22 @@ def build_launch_command(agent_cfg: dict, **kwargs: Any) -> list[str]:
         missing_key = exc.args[0]
         raise ValueError(f"missing template variable for command: {missing_key}") from exc
 
-    return shlex.split(command_text)
+    cmd = shlex.split(command_text)
+
+    # Post-injection: --model <value>
+    model = kwargs.get("model") if "model" in kwargs else agent_cfg.get("model")
+    if _should_inject_model(model):
+        model_flag = agent_cfg.get("model_flag", "--model")
+        model_value = str(model).strip()
+        # codex batch: stdin marker (-) の前に挿入
+        if cmd and cmd[-1] == "-":
+            cmd.insert(-1, model_flag)
+            cmd.insert(-1, model_value)
+        else:
+            cmd.append(model_flag)
+            cmd.append(model_value)
+
+    return cmd
 
 
 def build_initial_message(agent_cfg: dict, **kwargs: Any) -> str:
@@ -382,6 +415,7 @@ __all__ = [
     "CLI_PRESETS",
     "LEGACY_DEFAULTS",
     "DEFAULT_INITIAL_MESSAGE",
+    "_should_inject_model",
     "load_agent_config",
     "get_worker_count",
     "build_launch_command",

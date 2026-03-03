@@ -10,7 +10,7 @@ worktree:
 codex:
   sandbox: workspace-write
   approval: on-request
-  model: high
+  model: default
   web_search: false
 
 policies:
@@ -28,13 +28,15 @@ quality_gate:
 agents:
   oyabun:
     cli: claude
+    # model: opus        # optional: --model opus を CLI に渡す
   waka:
     cli: claude
+    # model: sonnet      # optional: --model sonnet を CLI に渡す
   worker:
     cli: codex
     sandbox: workspace-write
     approval: on-request
-    model: high
+    # model: o3          # optional: --model o3 を CLI に渡す（未指定時は CLI デフォルト）
     web_search: false
   plan:
     cli: claude
@@ -42,3 +44,4 @@ agents:
     cli: codex
   # review:              # 未設定時は worker と同じ CLI を使用
   #   cli: claude        # 実装と別の CLI でクロスレビュー
+  #   model: sonnet      # レビュー用に別モデルを指定可能

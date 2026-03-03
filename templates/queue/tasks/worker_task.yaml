@@ -37,7 +37,7 @@ task:
     mode: exec_stdin
     sandbox: workspace-write
     approval: on-request
-    model: default
+    model: high
     web_search: false
 
   prompt: |

@@ -1,5 +1,6 @@
 workers:
   codex_count: 5
+  count: 5
 
 worktree:
   enabled: true
@@ -9,7 +10,7 @@ worktree:
 codex:
   sandbox: workspace-write
   approval: on-request
-  model: default
+  model: high
   web_search: false
 
 policies:
@@ -23,3 +24,19 @@ quality_gate:
   reviewer_persona: qa_engineer
   require_different_reviewer: true
   checklist_template_path: ".yamibaito/templates/review-checklist.yaml"
+
+agents:
+  oyabun:
+    cli: claude
+  waka:
+    cli: claude
+  worker:
+    cli: codex
+    sandbox: workspace-write
+    approval: on-request
+    model: high
+    web_search: false
+  plan:
+    cli: claude
+  plan_review:
+    cli: codex

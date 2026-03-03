@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ORCH_ROOT/scripts/lib/agent_config_shell.sh"
 
 repo_root="."
 # Usage: yb init --repo <repo_root>
@@ -102,7 +103,7 @@ fi
 
 validate_required_prompts "$repo_root"
 
-worker_count=$(grep -E "^\\s*codex_count:" "$config_dir/config.yaml" | awk '{print $2}')
+worker_count=$(agent_get_worker_count "$config_dir/config.yaml")
 if [ -z "$worker_count" ]; then
   worker_count=3
 fi

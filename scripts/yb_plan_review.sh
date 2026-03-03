@@ -39,6 +39,8 @@ if [ -z "$plan_dir" ]; then
 fi
 
 repo_root="$(cd "$repo_root" && pwd)"
+config_file="$repo_root/.yamibaito/config.yaml"
+source "$ORCH_ROOT/scripts/lib/agent_config_shell.sh"
 
 plan_dir="$(cd "$plan_dir" && pwd)"
 
@@ -79,7 +81,7 @@ EOF
   exit 1
 fi
 
-# Write static validation result first (always preserved even if Codex fails)
+# Write static validation result first (always preserved even if LLM review fails)
 cat > "$review_report" <<EOF
 # Plan Review Report
 
@@ -91,7 +93,7 @@ $validate_output
 
 ## LLM Review
 
-(Codex による LLM レビュー実行中... 完了後にこのセクションが更新されます)
+(LLM レビュー実行中... 完了後にこのセクションが更新されます)
 EOF
 
 panes_file="$plan_dir/panes.json"
@@ -100,14 +102,14 @@ if [ ! -f "$panes_file" ]; then
   exit 1
 fi
 
-read -r session_name codex_pane < <(python3 - "$panes_file" <<'PY'
+read -r session_name review_pane < <(python3 - "$panes_file" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
 with open(path, "r", encoding="utf-8") as f:
     data = json.load(f)
-print(data["session"], data["codex"])
+print(data["session"], data["review"])
 PY
 )
 
@@ -144,10 +146,11 @@ This is a requirements/plan review, not a code review.
 Read ONLY these files. Do not search for other files or directories.
 EOF
 
-cmd="codex exec \"\$(cat \"$runtime_prompt\")\" | tee -a \"$review_report\""
-tmux send-keys -t "$session_name":"$codex_pane" "$cmd"
-tmux send-keys -t "$session_name":"$codex_pane" Enter
+_review_cmd=$(agent_get_command "$config_file" "plan_review")
+cmd="cat \"$runtime_prompt\" | $_review_cmd | tee -a \"$review_report\""
+tmux send-keys -t "$session_name":"$review_pane" "$cmd"
+tmux send-keys -t "$session_name":"$review_pane" Enter
 
 echo "yb plan-review: static validation PASSED."
-echo "yb plan-review: LLM review を Codex ペインに送信しました。"
+echo "yb plan-review: LLM review を レビューペインに送信しました。"
 echo "yb plan-review: 完了後 $review_report を確認してください。"

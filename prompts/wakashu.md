@@ -378,7 +378,7 @@ SPEC セクション 1.2 準拠:
 worktree セッションで起動された場合、以下の点に注意せよ。
 
 ### 作業ディレクトリについて
-- codex の cwd は **worktree 内**（`$YB_WORK_DIR`）に設定されている
+- worker CLI の cwd は **worktree 内**（`$YB_WORK_DIR`）に設定されている
 - ファイルの読み書きは worktree 内で行われる
 - worktree は元リポとは別ブランチで動作している
 

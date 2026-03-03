@@ -280,6 +280,8 @@ for candidate in reversed(scripts_dir_candidates):
     if candidate not in sys.path:
         sys.path.insert(0, candidate)
 
+from lib.agent_config import get_worker_count
+
 try:
     from lib.feedback import REQUIRED_FEEDBACK_FIELDS as imported_required_feedback_fields
     from lib.feedback import resolve_target as imported_resolve_target
@@ -846,15 +848,13 @@ def atomic_write_json(path, payload):
         print(f"error: atomic write failed for {path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-worker_count = 3
+worker_count = get_worker_count(config_file)
 max_rework_loops = 3
 if os.path.exists(config_file):
     with open(config_file, "r", encoding="utf-8") as f:
         for line in f:
             stripped = line.strip()
-            if stripped.startswith("codex_count:"):
-                worker_count = parse_non_negative_int(stripped.split(":", 1)[1], 3)
-            elif stripped.startswith("max_rework_loops:"):
+            if stripped.startswith("max_rework_loops:"):
                 max_rework_loops = parse_non_negative_int(stripped.split(":", 1)[1], 3)
 
 tasks = []
@@ -1391,7 +1391,7 @@ task:
     mode: exec_stdin
     sandbox: workspace-write
     approval: on-request
-    model: default
+    model: high
     web_search: false
 
   prompt: |

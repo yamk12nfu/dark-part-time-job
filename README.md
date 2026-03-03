@@ -5,8 +5,8 @@
 ## 必要なパッケージ
 
 - `tmux`
-- `claude` CLI（Claude Code）
-- `codex` CLI
+- `claude` CLI / `codex` CLI / `gemini` CLI / `copilot` CLI のうち、`.yamibaito/config.yaml` の `agents:` で指定した CLI
+- `agents:` 未指定時（デフォルト）は `claude` + `codex` CLI が必要（`config.yaml` で切替可能）
 - `python3`
 - `python3 -m pip install pyyaml`（推奨。`yb plan-review` の静的バリデーションで使用。未インストール時は一部チェックがスキップされる）
 - `git`
@@ -43,6 +43,30 @@ yb start --repo /path/to/your/repo
 yb start --repo /path/to/your/repo --session feature-x
 ```
 
+## 既存リポジトリのアップグレード
+
+既に `yb init` 済みのリポジトリで新機能（CLI切替）を使うには:
+
+1. `yb init` を再実行（プロンプトファイルは最新版に更新される。config.yaml は既存を保持）
+2. `.yamibaito/config.yaml` に `agents:` セクションを手動追加:
+   ```yaml
+   agents:
+     oyabun:
+       cli: claude    # claude | gemini | codex | copilot | custom
+     waka:
+       cli: claude
+     worker:
+       cli: codex
+       sandbox: workspace-write
+     plan:
+       cli: claude
+     plan_review:
+       cli: codex
+   ```
+3. `workers.codex_count` → `workers.count` への移行は任意（旧キーもフォールバックで動作）
+
+`agents:` セクションを追加しなくても既存動作は維持される（後方互換）。
+
 ## 使い方（各リポジトリ側）
 
 1) 初期化
@@ -77,7 +101,30 @@ tmux attach -t yamibaito_<repo>
 
 ## 設定
 
-`.yamibaito/config.yaml` の `workers.codex_count` を変えると若衆の人数が変わる。
+`.yamibaito/config.yaml` で主に以下を設定する。
+
+- `workers.count`: 若衆（worker）人数の新キー（優先）
+- `workers.codex_count`: 旧キー（`workers.count` 未指定時のフォールバック）
+- `agents`: ロールごとのCLI設定。`oyabun` / `waka` / `worker` / `plan` / `plan_review` の各 `cli` に `claude` / `gemini` / `codex` / `copilot` / `custom` を指定可能
+
+設定例:
+
+```yaml
+workers:
+  count: 3
+agents:
+  oyabun:
+    cli: claude
+  waka:
+    cli: claude
+  worker:
+    cli: codex
+    sandbox: workspace-write
+  plan:
+    cli: claude
+  plan_review:
+    cli: codex
+```
 
 ## スキル化とペルソナ
 
@@ -103,7 +150,7 @@ tmux attach -t yamibaito_<repo>
 | `yb dispatch` | 若衆へ割当済みタスクを起動（手動用） |
 | `yb collect` | `dashboard.md` を再生成 |
 | `yb plan` | 計画作成セッション（PRD+SPEC+tasks.yaml 3点セット）を新規起動 |
-| `yb plan-review` | 静的バリデーション + Codex による計画書レビュー |
+| `yb plan-review` | 静的バリデーション + LLM レビュー |
 | `yb run-worker` | 若衆（ワーカー）のタスクを実行（内部用） |
 
 ---
@@ -130,7 +177,7 @@ yb init --repo /path/to/repo   # 別リポジトリを対象
    - `plan/PRD.md`、`plan/SPEC.md`、`plan/tasks.yaml`
 4. オーケストレータからプロンプトファイルをコピー（常に最新版で上書き）
    - `oyabun.md`、`waka.md`、`wakashu.md`、`plan.md`
-5. `config.yaml` の `workers.codex_count`（未設定時は 3）に応じてワーカーファイルを生成
+5. `config.yaml` の `workers.count`（未設定時は `workers.codex_count`、どちらも未設定時は 3）に応じてワーカーファイルを生成
    - `tasks/worker_001.yaml` 〜 `tasks/worker_XXX.yaml`
    - `reports/worker_001_report.yaml` 〜 `reports/worker_XXX_report.yaml`
    - `reports/_index.json`
@@ -158,14 +205,14 @@ yb plan --repo /path/to/repo --title auth-session
    - `PRD.md` — プロダクト要件（目的/背景、スコープ、FR、NFR、AC、Open Questions）
    - `SPEC.md` — 実装設計（アーキテクチャ、インターフェース、タスク分解、テスト計画、ロールアウト/互換性、リスク）
    - `tasks.yaml` — 機械可読なタスク定義（owner, depends_on, requirement_ids, deliverables, definition_of_done）
-   - `review_prompt.md` — Codex レビュー用プロンプト
+   - `review_prompt.md` — LLM レビュー用プロンプト
 3. 新規 tmux セッションを作成（上: plan ペイン 80%、下: codex ペイン 20%）
 4. plan ペインで Claude Code を起動し、`plan.md` プロンプトを読み込ませる
 5. `.yamibaito/plan/<name>/panes.json` にペインマッピングを保存
 
 **運用ルール:**
 
-- Claude Code 内で `plan-review` を入力したら、plan ペインの Claude が `yb plan-review` を実行する（静的バリデーション → Codex レビュー）
+- Claude Code 内で `plan-review` を入力したら、plan ペインの Claude が `yb plan-review` を実行する（静的バリデーション → LLM レビュー）
 - 不明点や曖昧な点は推測せず、必ず質問する
 - 計画の完了条件: PRD.md + SPEC.md + tasks.yaml の3点が全て埋まり、`plan-review` で Pass していること
 
@@ -179,7 +226,7 @@ yb plan --repo /path/to/repo --title auth-session
 
 ### `yb plan-review`
 
-計画書の静的バリデーションと Codex による LLM レビューを実行する。
+計画書の静的バリデーションと LLM レビューを実行する。
 
 ```bash
 yb plan-review --repo /path/to/repo --plan-dir /path/to/plan
@@ -198,14 +245,14 @@ yb plan-review --repo /path/to/repo --plan-dir /path/to/plan
    - tasks.yaml: 依存関係の DAG 検証（循環検出、重複ID検出）
    - tasks.yaml: 未知の依存先（`depends_on` の未定義 ID）を WARN として検出
 2. 静的バリデーションが FAIL の場合、`plan_review_report.md` にエラーを書き出して終了（LLM レビューはスキップ）
-3. 静的バリデーションが PASS の場合、`review_prompt.md` をもとに `review_prompt_runtime.md` を生成し、レビュー対象ファイルの絶対パスを付加して Codex ペインで LLM レビューを実行
+3. 静的バリデーションが PASS の場合、`review_prompt.md` をもとに `review_prompt_runtime.md` を生成し、レビュー対象ファイルの絶対パスを付加して plan-review 用ペインで LLM レビューを実行
 4. 結果を `plan_review_report.md` に追記（`review_prompt.md` 本体は変更しない）
 
 ---
 
 ### `yb start`
 
-tmux セッションを作成し、親分・若頭の Claude インスタンスを起動する。
+tmux セッションを作成し、親分・若頭の `agents:` 指定に応じた CLI / LLM インスタンスを起動する。
 
 ```bash
 yb start                        # カレントディレクトリを対象
@@ -243,7 +290,7 @@ yb start --repo /path/to/repo --session feature-x --no-worktree   # worktree な
    - 若衆ペイン: 各若衆に和名（銀次、龍、影、蓮 など）を割り当て
 4. `.yamibaito/panes.json`（`--session` 指定時は `panes_<id>.json`）にペインマッピングを保存
 5. 全ペインの環境を初期化（`PATH` にオーケストレータの `bin` を追加、リポジトリルートへ `cd`、画面クリア）
-6. 親分 → 若頭の順に `claude --dangerously-skip-permissions` を起動し、それぞれのプロンプトファイルを読み込ませる
+6. 親分 → 若頭の順に `config.yaml` の `agents:` で指定された CLI を起動し、それぞれのプロンプトファイルを読み込ませる
 7. tmux 外から実行した場合、自動的にセッションにアタッチ
 
 **新オプション:**
@@ -327,7 +374,7 @@ yb restart --repo /path/to/repo --session feature-x --from develop     # --from 
 | `--delete-worktree` | 既存 worktree を削除して再作成 |
 | `--from <ref>` | yb start に転送。worktree 再作成時の base 指定 |
 
-**注意:** セッション内の全プロセス（Claude インスタンス含む）が強制終了される。キュー（`.yamibaito/queue/` または `.yamibaito/queue_<id>/`）やレポート等のファイルは保持される。
+**注意:** セッション内の全プロセス（`agents:` 指定の CLI / LLM インスタンス含む）が強制終了される。キュー（`.yamibaito/queue/` または `.yamibaito/queue_<id>/`）やレポート等のファイルは保持される。
 
 ---
 
@@ -377,12 +424,12 @@ yamibaito_myrepo_bugfix-y      yamibaito/bugfix-y             /path/to/yamibaito
 
 | ケース | 説明 |
 | --- | --- |
-| **Claude がハングした** | 親分・若頭の Claude インスタンスが応答しなくなった場合。ペインが固まっているときはリスタートが手っ取り早い |
+| **LLM がハングした** | 親分・若頭の `agents:` 指定 CLI / LLM インスタンスが応答しなくなった場合。ペインが固まっているときはリスタートが手っ取り早い |
 | **ペイン構成が壊れた** | 手動でペインを閉じたり分割したりして、レイアウトが崩れた場合 |
-| **config.yaml を変更した** | ワーカー数（`codex_count`）を変更した後、新しい構成を反映したい場合 |
+| **config.yaml を変更した** | ワーカー数（`workers.count`（旧: `codex_count`））を変更した後、新しい構成を反映したい場合 |
 | **プロンプトを更新した** | `prompts/oyabun.md` や `prompts/waka.md` を編集した後、新しいプロンプトで起動し直したい場合 |
 | **セッション内のエラーを一掃したい** | 若衆の状態がおかしくなった、キューの処理が詰まった等、クリーンな状態から再開したい場合 |
-| **長時間稼働後のリフレッシュ** | Claude インスタンスのコンテキストが膨らみすぎてパフォーマンスが落ちた場合 |
+| **長時間稼働後のリフレッシュ** | CLI / LLM インスタンスのコンテキストが膨らみすぎてパフォーマンスが落ちた場合 |
 
 **`yb restart` と `yb start` の違い:**
 

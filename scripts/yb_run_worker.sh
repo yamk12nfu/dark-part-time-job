@@ -75,6 +75,14 @@ fi
 REPO_ROOT="$repo_root" TASK_FILE="$task_file" ORCH_ROOT="$ORCH_ROOT" PANES_SUFFIX="$session_suffix" SESSION_ID="$session_id" python3 - <<'PY'
 import os, sys, subprocess, json, re
 
+# Add scripts/lib to path for agent_config
+_orch_root = os.environ.get("ORCH_ROOT", "")
+if _orch_root:
+    sys.path.insert(0, os.path.join(_orch_root, "scripts", "lib"))
+else:
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+from agent_config import load_agent_config, build_launch_command
+
 repo_root = os.environ["REPO_ROOT"]
 task_file = os.environ["TASK_FILE"]
 panes_suffix = os.environ.get("PANES_SUFFIX", "")
@@ -101,7 +109,9 @@ if os.path.exists(panes_path):
 if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
 
-cmd = ["codex", "exec", "--sandbox", sandbox, "-"]
+config_path = os.path.join(repo_root, ".yamibaito", "config.yaml")
+agent_cfg = load_agent_config(config_path, "worker")
+cmd = build_launch_command(agent_cfg, sandbox=sandbox)
 proc = subprocess.Popen(
     cmd,
     stdin=subprocess.PIPE,

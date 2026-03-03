@@ -431,6 +431,7 @@ class TestAgentConfig(unittest.TestCase):
         claude_cmd = build_launch_command(claude_cfg)
         self.assertIsInstance(claude_cmd, list)
         self.assertTrue(all(isinstance(part, str) for part in claude_cmd))
+        self.assertIn("-p", claude_cmd)
 
     def test_is_missing_empty_dict(self):
         self.assertTrue(_is_missing({}))
@@ -504,8 +505,10 @@ class TestAgentConfig(unittest.TestCase):
         )
         review_cfg = load_agent_config(path, "review")
         worker_cfg = load_agent_config(path, "worker")
+        review_cmd = build_launch_command(review_cfg)
 
         self.assertIn("claude", review_cfg.get("command", ""))
+        self.assertIn("-p", review_cmd)
         self.assertIn("codex", worker_cfg.get("command", ""))
         self.assertNotEqual(review_cfg.get("cli"), worker_cfg.get("cli"))
 
@@ -649,7 +652,7 @@ class TestAgentConfig(unittest.TestCase):
         cfg = load_agent_config(path, "review")
         self.assertEqual(
             build_launch_command(cfg),
-            ["claude", "--dangerously-skip-permissions", "--model", "sonnet"],
+            ["claude", "--dangerously-skip-permissions", "-p", "--model", "sonnet"],
         )
 
     def test_model_injection_custom_cli(self):

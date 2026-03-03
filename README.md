@@ -437,3 +437,147 @@ yamibaito_myrepo_bugfix-y      yamibaito/bugfix-y             /path/to/yamibaito
 - `yb restart` は既存セッションがあれば自動的に破棄してから起動する
 
 つまり「今のセッションを一旦壊してやり直したい」ときは `yb restart`、「まだセッションがない状態から新規に立ち上げる」ときは `yb start` を使う。
+
+## エージェント設定ガイド
+
+### 1. agents セクションの各ロール説明
+
+| ロール | 説明 | モード |
+|--------|------|--------|
+| oyabun | 親分 | interactive |
+| waka | 若頭 | interactive |
+| worker | 若衆（stdin でタスクを受け取る） | batch_stdin |
+| review | レビュー（未設定時は worker と同一設定にフォールバック） | batch_stdin |
+| plan | 計画作成 | interactive |
+| plan_review | 計画レビュー | batch_stdin |
+
+### 2. cli に指定可能な値
+
+| cli | 説明 |
+|-----|------|
+| claude | Claude Code CLI（interactive / batch 両対応） |
+| codex | OpenAI Codex CLI（interactive / batch_stdin 両対応） |
+| copilot | GitHub Copilot CLI（interactive 対応。--model で複数モデル利用可能） |
+| custom | 独自 CLI（command, mode を自分で指定） |
+
+※ gemini は現状非推奨（安定性に課題あり）
+
+### 3. model フィールドの説明
+
+- 各ロールに `model:` を指定すると `--model <value>` が CLI コマンドに自動注入される
+- 未指定 or `model: default` → CLI のデフォルトモデルを使用（--model フラグなし）
+- claude の場合: `opus`, `sonnet` 等のエイリアスまたはフルネーム（`claude-opus-4-6`）
+- codex の場合: `gpt-5.3-codex`, `gpt-5.2-codex`, `o3` 等
+- copilot の場合: `claude-sonnet-4`, `gpt-4o` 等（copilot が対応するモデル）
+
+### 4. worker/review で claude を使う場合
+
+- batch_command に `-p` フラグ（print mode）が自動付与されるため、
+  `cli: claude` をそのまま指定するだけでよい
+- `-p` モードは1回のレスポンスを stdout に出力して終了するバッチ実行
+  （codex exec と同等の動作）
+- **`cli: custom` は不要**。`cli: claude` で worker/review が正しく動作する
+
+## おすすめ構成
+
+### 構成1: 最高品質（Claude Opus + Codex クロスレビュー）
+
+```yaml
+agents:
+  oyabun:
+    cli: claude
+    model: opus
+  waka:
+    cli: claude
+    model: sonnet
+  worker:
+    cli: claude
+    model: opus
+  review:
+    cli: codex
+    model: gpt-5.3-codex
+  plan:
+    cli: claude
+    model: opus
+  plan_review:
+    cli: codex
+    model: gpt-5.3-codex
+```
+
+特徴: 全実装を Opus が担当し、Codex がクロスレビュー。最高品質だがコスト高。
+worker に claude を指定しても batch_command に -p が自動付与されるため問題なし。
+
+### 構成2: バランス型（Claude + Codex 分業）
+
+```yaml
+agents:
+  oyabun:
+    cli: claude
+    model: opus
+  waka:
+    cli: claude
+    model: sonnet
+  worker:
+    cli: codex
+    model: gpt-5.3-codex
+  review:
+    cli: claude
+    model: sonnet
+  plan:
+    cli: claude
+    model: opus
+  plan_review:
+    cli: codex
+    model: gpt-5.2-codex
+```
+
+特徴: 実装は Codex、レビューは Claude でクロスレビュー。コストと品質のバランスが良い。
+
+### 構成3: コスト効率型（Claude Sonnet 統一）
+
+```yaml
+agents:
+  oyabun:
+    cli: claude
+    model: sonnet
+  waka:
+    cli: claude
+    model: sonnet
+  worker:
+    cli: codex
+  plan:
+    cli: claude
+    model: sonnet
+  plan_review:
+    cli: codex
+```
+
+特徴: Sonnet ベースで低コスト。worker/plan_review は codex のデフォルトモデルを使用。
+review 未設定のため worker と同じ codex がフォールバックで適用される。
+
+### 構成4: Copilot 統一型（マルチモデルゲートウェイ）
+
+```yaml
+agents:
+  oyabun:
+    cli: copilot
+    model: claude-sonnet-4
+  waka:
+    cli: copilot
+    model: claude-sonnet-4
+  worker:
+    cli: copilot
+    model: gpt-4o
+  review:
+    cli: copilot
+    model: claude-sonnet-4
+  plan:
+    cli: copilot
+    model: claude-sonnet-4
+  plan_review:
+    cli: copilot
+    model: gpt-4o
+```
+
+特徴: Copilot CLI 経由で複数モデルを使い分け。1つの CLI で完結。
+ただし Copilot の interactive モード対応は要検証。

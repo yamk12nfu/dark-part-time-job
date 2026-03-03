@@ -13,7 +13,7 @@ from typing import Any, Dict
 CLI_PRESETS = {
     "claude": {
         "interactive_command": "claude --dangerously-skip-permissions",
-        "batch_command": "claude --dangerously-skip-permissions",
+        "batch_command": "claude --dangerously-skip-permissions -p",
         "mode": "interactive",
         "model_flag": "--model",
     },

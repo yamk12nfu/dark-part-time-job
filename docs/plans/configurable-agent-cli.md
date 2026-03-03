@@ -17,11 +17,11 @@
 | CLI | batch コマンド | stdin パイプの形 |
 |-----|---------------|-----------------|
 | Codex | `codex exec --sandbox {sandbox} -` | `proc.communicate(content)`（現行通り） |
-| Claude Code | `claude --dangerously-skip-permissions` | `proc.communicate(content)` |
+| Claude Code | `claude --dangerously-skip-permissions -p` | `proc.communicate(content)` |
 | Gemini CLI | `gemini` | `proc.communicate(content)` |
 
 全CLIで `subprocess.Popen(cmd_list, stdin=subprocess.PIPE)` → `proc.communicate(content)` の統一パターンを使う。
-`-p` フラグやシェル引数渡しは一切使わない。
+batch_command では `-p`（print mode）を付与し、stdin パイプで安全に渡す。
 
 **理由（ISSUE-05/05-R1 対応）**: タスクYAMLは長文・改行・特殊文字を含むため、シェル引数に直接渡すとクォート破壊リスクがある。stdin パイプなら全CLIで安全に渡せる。
 
@@ -71,7 +71,7 @@ agents:
 
 | プリセット | interactive command | batch command (stdin) | mode |
 |-----------|-------------------|----------------------|------|
-| `claude` | `claude --dangerously-skip-permissions` | `claude --dangerously-skip-permissions` | `interactive` |
+| `claude` | `claude --dangerously-skip-permissions` | `claude --dangerously-skip-permissions -p` | `interactive` |
 | `gemini` | `gemini --yolo` | `gemini` | `interactive` |
 | `codex` | `codex --dangerously-bypass-approvals-and-sandbox` | `codex exec --sandbox {sandbox} -` | `batch_stdin` |
 | `copilot` | `copilot --autopilot` | `copilot` | `interactive` |

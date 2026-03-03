@@ -95,6 +95,10 @@ with open(task_file, "r", encoding="utf-8") as f:
 sandbox_match = re.search(r'^\s*sandbox:\s*(\S+)', content, re.MULTILINE)
 sandbox = sandbox_match.group(1).strip('"\'') if sandbox_match else "workspace-write"
 
+# Extract phase from task YAML (default: implement)
+phase_match = re.search(r'^\s*phase:\s*(\S+)', content, re.MULTILINE)
+phase = phase_match.group(1).strip('"\'').lower() if phase_match else "implement"
+
 # Read work_dir from panes.json
 panes_path = os.path.join(repo_root, ".yamibaito", f"panes{panes_suffix}.json")
 work_dir = repo_root  # default
@@ -110,7 +114,8 @@ if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
 
 config_path = os.path.join(repo_root, ".yamibaito", "config.yaml")
-agent_cfg = load_agent_config(config_path, "worker")
+role = "review" if phase == "review" else "worker"
+agent_cfg = load_agent_config(config_path, role)
 cmd = build_launch_command(agent_cfg, sandbox=sandbox)
 proc = subprocess.Popen(
     cmd,

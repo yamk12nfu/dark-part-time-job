@@ -47,6 +47,8 @@ agents:
     cli: claude
   plan_review:
     cli: codex
+  # review:              # 未設定時は worker と同じ CLI を使用
+  #   cli: claude        # 実装と別の CLI でクロスレビュー
 ```
 
 **ISSUE-06 対応**: `options` 階層を廃止し、worker固有設定はロール直下にフラット配置。
@@ -84,6 +86,7 @@ agents:
   - worker, plan_review → `codex`
 - `workers.codex_count` → `workers.count` の新キーを優先、旧キーもフォールバックで読む
 - `codex:` トップレベルセクション → `agents.worker` の sandbox/model 等が未指定の場合のフォールバック
+- `agents.review` が未設定の場合 → `agents.worker` の設定にフォールバック（現行と100%同一動作）
 
 ### CLIバイナリ事前チェック（Q4 対応）
 
@@ -135,7 +138,7 @@ config.yaml の `agents:` セクションをインデントベースで解析す
 フォールバック解決順序:
 1. `agents.<role>` の明示指定
 2. `CLI_PRESETS[agents.<role>.cli]` のプリセットデフォルト
-3. レガシーデフォルト（oyabun/waka/plan=claude、worker/plan_review=codex）
+3. レガシーデフォルト（oyabun/waka/plan=claude、worker, plan_review, review → codex）
 4. worker の sandbox/model 等 → `codex:` トップレベルセクションからフォールバック
 
 #### 1-2. `scripts/lib/_agent_config_cli.py`（新規）

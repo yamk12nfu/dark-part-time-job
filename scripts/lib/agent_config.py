@@ -39,12 +39,13 @@ LEGACY_DEFAULTS = {
     "plan": "claude",
     "worker": "codex",
     "plan_review": "codex",
+    "review": "codex",
 }
 
 DEFAULT_INITIAL_MESSAGE = 'Please read file: "{prompt_path}" and follow it. You are the {role}.'
 
 _INTERACTIVE_ROLES = {"oyabun", "waka", "plan"}
-_BATCH_STDIN_ROLES = {"worker", "plan_review"}
+_BATCH_STDIN_ROLES = {"worker", "plan_review", "review"}
 _WORKER_DEFAULTS = {
     "sandbox": "workspace-write",
     "approval": "on-request",
@@ -242,6 +243,10 @@ def load_agent_config(config_path: str, role: str) -> dict:
     if not isinstance(role_cfg, dict):
         role_cfg = {}
 
+    # review 未設定時は worker にフォールバック（後方互換）
+    if role == "review" and not role_cfg:
+        return load_agent_config(config_path, "worker")
+
     default_cli = _default_cli_for_role(role)
     cli = _clean_text(role_cfg.get("cli")).lower() or default_cli
 
@@ -273,7 +278,7 @@ def load_agent_config(config_path: str, role: str) -> dict:
     model = role_cfg.get("model")
     web_search = role_cfg.get("web_search")
 
-    if role in {"worker", "plan_review"}:
+    if role in {"worker", "plan_review", "review"}:
         if _is_missing(sandbox):
             sandbox = top_level_codex.get("sandbox")
         if _is_missing(approval):

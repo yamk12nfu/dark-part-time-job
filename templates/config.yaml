@@ -40,3 +40,5 @@ agents:
     cli: claude
   plan_review:
     cli: codex
+  # review:              # 未設定時は worker と同じ CLI を使用
+  #   cli: claude        # 実装と別の CLI でクロスレビュー

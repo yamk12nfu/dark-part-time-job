@@ -474,5 +474,68 @@ class TestAgentConfig(unittest.TestCase):
         )
 
 
+    def test_review_role_fallback_to_worker(self):
+        """review 未設定時は worker の設定にフォールバック"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+            """
+        )
+        review_cfg = load_agent_config(path, "review")
+        worker_cfg = load_agent_config(path, "worker")
+
+        self.assertEqual(review_cfg.get("cli"), worker_cfg.get("cli"))
+        self.assertEqual(review_cfg.get("command"), worker_cfg.get("command"))
+        self.assertEqual(review_cfg.get("mode"), "batch_stdin")
+
+    def test_review_role_explicit(self):
+        """review 明示指定時に正しい CLI を返す"""
+        path = self._write_temp_config(
+            """
+            agents:
+              worker:
+                cli: codex
+              review:
+                cli: claude
+            """
+        )
+        review_cfg = load_agent_config(path, "review")
+        worker_cfg = load_agent_config(path, "worker")
+
+        self.assertIn("claude", review_cfg.get("command", ""))
+        self.assertIn("codex", worker_cfg.get("command", ""))
+        self.assertNotEqual(review_cfg.get("cli"), worker_cfg.get("cli"))
+
+    def test_review_role_batch_mode(self):
+        """review は batch_stdin モード"""
+        path = self._write_temp_config(
+            """
+            agents:
+              review:
+                cli: claude
+            """
+        )
+        cfg = load_agent_config(path, "review")
+        self.assertEqual(cfg.get("mode"), "batch_stdin")
+
+    def test_review_role_inherits_worker_defaults(self):
+        """review が worker defaults (sandbox/model 等) を継承する"""
+        path = self._write_temp_config(
+            """
+            agents:
+              review:
+                cli: claude
+            codex:
+              sandbox: workspace-write
+              model: high
+            """
+        )
+        cfg = load_agent_config(path, "review")
+        self.assertEqual(cfg.get("sandbox"), "workspace-write")
+        self.assertEqual(cfg.get("model"), "high")
+
+
 if __name__ == "__main__":
     unittest.main()

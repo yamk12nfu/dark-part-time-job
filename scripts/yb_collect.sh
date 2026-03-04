@@ -886,17 +886,12 @@ for t in tasks:
     })
 
 current_cmd_id = None
-all_tasks_completed_for_current_cmd = False
 if task_candidates:
     active_tasks = [t for t in task_candidates if t["status"] in ("pending", "in_progress")]
     if active_tasks:
         current_cmd_id = max(active_tasks, key=lambda t: t["assigned_at"])["parent_cmd_id"]
     else:
         current_cmd_id = max(task_candidates, key=lambda t: t["assigned_at"])["parent_cmd_id"]
-    current_cmd_tasks = [t for t in task_candidates if t["parent_cmd_id"] == current_cmd_id]
-    all_tasks_completed_for_current_cmd = bool(current_cmd_tasks) and all(
-        t["status"] in completion_statuses for t in current_cmd_tasks
-    )
 
 feedback_tamper_findings, feedback_tamper_warnings = detect_feedback_entry_tamper((work_dir, repo_root))
 for tamper_warning in feedback_tamper_warnings:
@@ -1427,21 +1422,6 @@ for r in reports:
         pass
 
 atomic_write_json(index_file, index_payload)
-
-# dashboard 更新とは分離し、全完了時のみ親分へ報告
-if current_cmd_id and all_tasks_completed_for_current_cmd:
-    session = panes_data.get("session")
-    oyabun = panes_data.get("oyabun")
-    if session and oyabun:
-        notify = (
-            f"collect complete: {current_cmd_id} の全taskが done/completed。"
-            f" {work_dir}/dashboard.md を更新しました。"
-        )
-        try:
-            subprocess.run(["tmux", "send-keys", "-t", f"{session}:{oyabun}", notify], check=False)
-            subprocess.run(["tmux", "send-keys", "-t", f"{session}:{oyabun}", "Enter"], check=False)
-        except (FileNotFoundError, OSError) as e:
-            print(f"warning: failed to send tmux notification: {e}", file=sys.stderr)
 PY
 }
 

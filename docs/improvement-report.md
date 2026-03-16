@@ -1,252 +1,265 @@
-# yamibaito 改善レポート
-
-yamibaito は、tmux 上で親分・若頭・若衆の複数エージェントを起動し、キュー配布・進捗収集・レポート生成を行う運用オーケストレータである。本レポートは 4 件の調査結果を統合し、運用事故を防ぐための優先度付き改善計画として再整理した。
-
-## 優先度サマリ
-
-### 即対応
-このグループは、誤タスク消去や起動失敗のように、日次運用の継続性を直接壊す課題を対象とする。いずれも失敗時の影響範囲が広く、放置すると障害調査コストより先に運用停止リスクが顕在化するため、最優先で着手する。
-
-| 課題名 | 影響度 | 優先度 | 一言要約 |
-|---|---|---|---|
-| 起動シーケンスの固定 sleep 依存 | 高 | 即対応 | 起動待機が時間固定で race し、初回起動で指示投入に失敗する。 |
-| `yb_collect` のタスクリセット防御不足 | 高 | 即対応 | 完了 report を根拠に誤った task を `idle` へ戻す可能性がある。 |
-| `panes.json` の nullable 構造 | 高 | 即対応 | 読み取り側で場当たり的な null 防御が増え、再起動時に誤判定を誘発する。 |
-| `prompts/` の二重管理 | 高 | 即対応 | ルートと runtime コピーが乖離し、実行仕様が環境ごとに変わる。 |
-| プロンプト仕様の不整合 | 高 | 即対応 | 送信責務と version の定義がファイル間で矛盾している。 |
-| worker runtime の `codex` 固定 | 高 | 即対応 | worker ごとの実行基盤を選べず、拡張と互換運用を阻害する。 |
-| skill 運用 MVP 未整備 | 高 | 即対応 | 候補検出後の登録・検証フローがなく運用が閉じない。 |
-| `yb_restart` の `grep` shim 依存 | 高 | 即対応 | PATH 差し替えで設定注入する実装が壊れやすく保守不能。 |
-
-### 次スプリント
-このグループは、可観測性と保守性を高めるための課題である。即時障害には直結しないが、障害時の復旧時間や運用負債に直結するため、次スプリントでまとめて改善する。
-
-| 課題名 | 影響度 | 優先度 | 一言要約 |
-|---|---|---|---|
-| 構造化ログ不足 | 中 | 次スプリント | `echo/print` 中心で、障害時の時系列追跡が難しい。 |
-| dashboard 更新の排他制御不足 | 中 | 次スプリント | 同時実行で last-writer-wins が起き、更新が取りこぼされる。 |
-| stale queue/report の残留 | 中 | 次スプリント | stop/restart 後の寿命管理がなく、古い状態が蓄積する。 |
-| worker 表示名のハードコード | 中 | 次スプリント | 表示ポリシー変更にコード修正が必要で運用変更に弱い。 |
-| オーケストレータ version 管理不在 | 中 | 次スプリント | 生成物がどの実装由来か追跡できない。 |
-| send-keys 仕様の重複定義 | 中 | 次スプリント | 同一ルールが複数 prompt に重複し記法も揺れている。 |
-
-### 将来
-このグループは、運用安定化後に行う構造改善である。設計効果は高いが変更範囲が広いため、先に即対応・次スプリントの安全性改善を終えてから着手する。
-
-| 課題名 | 影響度 | 優先度 | 一言要約 |
-|---|---|---|---|
-| dashboard の状態モデル分離 | 中 | 将来 | 文字列組み立て中心の実装を state + renderer に分離する。 |
-
-## 即対応の詳細
-
-### 起動シーケンスの固定 sleep 依存
-**何が問題か**  
-`yb start` は Claude CLI 起動直後の入力送信を `sleep 2/5/2` に依存している。端末負荷や初回認証の遅延があると、プロンプト投入が先行して初期化に失敗する。
-
-**どこが該当するか**  
-`scripts/yb_start.sh:305`、`scripts/yb_start.sh:306`、`scripts/yb_start.sh:309`、`scripts/yb_start.sh:311`。
-
-**どう直すか**  
-固定待機を廃止し、pane の生存確認とプロンプト検知を組み合わせた readiness check に置き換える。失敗時は timeout で即時に異常終了させ、再実行可能な失敗として扱う。
-
-```bash
-wait_for_claude_ready() {
-  local pane="$1" timeout="${2:-45}" i=0
-  while [ "$i" -lt "$timeout" ]; do
-    dead="$(tmux display-message -p -t "$pane" "#{pane_dead}" 2>/dev/null || echo 1)"
-    if [ "$dead" = "0" ] && tmux capture-pane -p -t "$pane" -S -40 | grep -E -q "(^> $|Claude|/help)"; then
-      return 0
-    fi
-    sleep 1
-    i=$((i + 1))
-  done
-  return 1
-}
-```
-
-### `yb_collect` のタスクリセット防御不足
-**何が問題か**  
-完了 report を検出した worker の task ファイルを機械的に `idle` 化しており、`task_id` や `parent_cmd_id` の整合を確認していない。再配布直後に collect が走ると、別タスクを消す race が起こる。
-
-**どこが該当するか**  
-`scripts/yb_collect.sh:166`、`scripts/yb_collect.sh:193`、`scripts/yb_collect.sh:265`、`scripts/yb_collect.sh:309`。
-
-**どう直すか**  
-リセット条件を「report と task が同一ジョブを指す」場合に限定する。さらに `idle` 直行ではなく、`collected` 中間状態を経由して dispatcher 側で確定させる。
-
-```python
-def can_reset_to_idle(report, task):
-    completion = {"done", "completed"}
-    report_status = (report.get("status") or "").lower()
-    task_status = (task.get("status") or "").lower()
-    return (
-        report_status in completion
-        and task_status in completion
-        and report.get("task_id") == task.get("task_id")
-        and report.get("parent_cmd_id") == task.get("parent_cmd_id")
-    )
-```
-
-### `panes.json` の nullable 構造
-**何が問題か**  
-`worktree_root` と `worktree_branch` が `null` 許容のため、読み取り側が推測ロジックを持ち始めている。再起動や停止時の処理がスクリプトごとに分岐し、整合性保証が難しい。
-
-**どこが該当するか**  
-`scripts/yb_start.sh:255`、`scripts/yb_start.sh:257`、`scripts/yb_restart.sh:55`、`scripts/yb_restart.sh:114`、`scripts/yb_stop.sh:62`、`scripts/yb_worktree_list.sh:37`。
-
-**どう直すか**  
-`schema_version` を導入し、`worktree.enabled/root/branch` の非 nullable 構造へ統一する。読み取りは共通ライブラリに集約し、正規化済みデータのみを上位スクリプトへ渡す。
-
-### `prompts/` の二重管理
-**何が問題か**  
-初期化時に `prompts/` を `.yamibaito/prompts/` にコピーし、実行時はコピー側を参照する。マスターと runtime が分離して差分管理不能になり、意図しない仕様分岐を生む。
-
-**どこが該当するか**  
-`scripts/yb_init_repo.sh:50`、`scripts/yb_start.sh:302`、`scripts/yb_plan.sh:91`、`prompts/waka.md:92`、`.yamibaito/prompts/waka.md:91`。
-
-**どう直すか**  
-`prompts/` を単一ソースに固定し、`.yamibaito/prompts` は symlink 化する。コピー運用を残す場合は `yb prompts sync` と `source_hash` 検証を必須化する。
-
-### プロンプト仕様の不整合
-**何が問題か**  
-`spec_version` と通知責務の定義が prompt 間でそろっておらず、「若衆が send-keys するかどうか」が文書ごとに矛盾している。運用手順の解釈差が作業ミスを生む。
-
-**どこが該当するか**  
-`.yamibaito/prompts/oyabun.md:9`、`.yamibaito/prompts/waka.md:9`、`.yamibaito/prompts/wakashu.md:9`、`.yamibaito/prompts/plan.md:9`、`.yamibaito/prompts/wakashu.md:63`、`.yamibaito/prompts/wakashu.md:66`。
-
-**どう直すか**  
-`spec_version` を全 prompt で統一し、通知経路を 1 方式に固定する。推奨は「若衆は send-keys 禁止、通知は `yb run-worker` のみ」である。
-
-### worker runtime の `codex` 固定
-**何が問題か**  
-`yb_run_worker.sh` が `codex exec` 前提で実装されており、worker ごとに Claude Code など別 runtime を選択できない。役割分担の自由度が低く、移行戦略も取りにくい。
-
-**どこが該当するか**  
-`scripts/yb_run_worker.sh:77`、`scripts/yb_start.sh:50`、`.yamibaito/config.yaml:2`。
-
-**どう直すか**  
-`config.yaml` に `default_runtime` と worker 別 `runtimes` を追加し、`yb_run_worker.sh` は runtime adapter で分岐させる。既存 `codex_count` は移行レイヤーで吸収する。
-
-### skill 運用 MVP 未整備
-**何が問題か**  
-プロンプト上では skill 抽出フローが定義されているが、テンプレート生成・index 登録・検証コマンドが未実装で、運用上は候補検出で止まる。
-
-**どこが該当するか**  
-`.yamibaito/skills/`、`.yamibaito/prompts/waka.md:91`、`.yamibaito/prompts/waka.md:337`、`.yamibaito/prompts/oyabun.md:302`、`scripts/yb_collect.sh:176`、`scripts/yb_collect.sh:241`。
-
-**どう直すか**  
-`.yamibaito/templates/skill/SKILL.md.tmpl`、`yb skill init`、`yb skill validate`、`.yamibaito/skills/index.yaml` を MVP として同時導入し、collect が検出した候補を未登録一覧として可視化する。
-
-### `yb_restart` の `grep` shim 依存
-**何が問題か**  
-`yb_restart.sh` は一時ディレクトリに `grep` ラッパーを生成し、`PATH` 先頭に差し込んで `branch_prefix` を擬似注入している。環境依存が強く、デバッグ時の再現性を損なう。
-
-**どこが該当するか**  
-`scripts/yb_restart.sh:143`、`scripts/yb_restart.sh:145`、`scripts/yb_restart.sh:154`、`scripts/yb_start.sh:58`。
-
-**どう直すか**  
-shim を廃止し、restart 由来の値は環境変数で明示受け渡しする。`yb_start.sh` 側で「環境変数があれば優先、なければ config 読み取り」に統一する。
-
-```bash
-# yb_restart.sh
-exec env \
-  YB_RESTART_WORKTREE_ROOT="$wt_root" \
-  YB_RESTART_WORKTREE_BRANCH="$wt_branch" \
-  YB_RESTART_WORKTREE_PREFIX="$restart_wt_prefix" \
-  "$ORCH_ROOT/scripts/yb_start.sh" "${start_args[@]}"
-
-# yb_start.sh
-if [ -n "${YB_RESTART_WORKTREE_PREFIX:-}" ]; then
-  wt_branch_prefix="$YB_RESTART_WORKTREE_PREFIX"
-else
-  wt_branch_prefix="$(read_branch_prefix_from_config "$config_file")"
-fi
-```
-
-## 次スプリントの詳細
-
-### 構造化ログ不足
-**何が問題か**  
-Bash/Python 双方でログが散発的な `echo/print` に留まり、障害時にイベントの相関が追えない。運用者が手作業で時系列を再構成する必要がある。
-
-**どこが該当するか**  
-`scripts/yb_start.sh:70`、`scripts/yb_collect.sh:335`、`scripts/yb_restart.sh:84`。
-
-**どう直すか**  
-`.yamibaito/logs/<session_id>/events.jsonl` を標準出力先とし、`ts/level/script/session_id/cmd_id/worker_id/event/message` を共通 schema 化する。Bash は `log_event` 関数、Python は JSON formatter を共通利用する。
-
-### dashboard 更新の排他制御不足
-**何が問題か**  
-collect 同時実行時に `dashboard.md` の単純上書きが競合し、最後に書いた処理のみ残る。最新状態が欠落し、判断材料の信頼性が落ちる。
-
-**どこが該当するか**  
-`scripts/yb_collect.sh:205`、`scripts/yb_collect.sh:262`、`scripts/yb_collect.sh:315`。
-
-**どう直すか**  
-collect 全体をロックし、`tmp` 書き出し後に `os.replace` で atomically 置換する。最低限、同時起動時の更新取りこぼしをなくしてから次段の構造改善へ進む。
-
-### stale queue/report の残留
-**何が問題か**  
-queue と report の寿命管理がなく、終了済み session のデータが残り続ける。古いファイルが現行運用と混在し、誤読と誤収集の温床になる。
-
-**どこが該当するか**  
-`scripts/yb_start.sh:114`、`scripts/yb_stop.sh:44`、`scripts/yb_restart.sh:82`、`scripts/yb_init_repo.sh:23`。
-
-**どう直すか**  
-`yb cleanup` を追加し、TTL と active session 判定に基づいて archive へ退避する。`yb start` 前に stale 検出警告を出し、自動削除は opt-in とする。
-
-### worker 表示名のハードコード
-**何が問題か**  
-表示名が `yb_start.sh` の固定配列に埋め込まれており、運用ポリシー変更時にコード修正が必要になる。
-
-**どこが該当するか**  
-`scripts/yb_start.sh:206`、`scripts/yb_start.sh:249`、`.yamibaito/panes.json:16`。
-
-**どう直すか**  
-`config.yaml` に `workers.display_names` を追加し、未指定時だけ既定名へフォールバックする。表示ポリシーをコードから分離する。
-
-### オーケストレータ version 管理不在
-**何が問題か**  
-`yb --version` がなく、生成物にも orchestrator version が残らない。障害時に「どの実装で作られた状態か」を特定できない。
-
-**どこが該当するか**  
-`bin/yb:10`、`bin/yb:28`、`.yamibaito/config.yaml:1`、`.yamibaito/panes.json:1`。
-
-**どう直すか**  
-`VERSION` ファイルを導入し、`yb --version` で表示する。`panes*.json` と planner 出力に `orchestrator_version` を埋め込み、互換ポリシーを SemVer で明示する。
-
-### send-keys 仕様の重複定義
-**何が問題か**  
-2段 send-keys のルールが複数 prompt に重複し、`two_bash_calls` と `two_calls` のように語彙が揺れている。修正時に反映漏れが発生しやすい。
-
-**どこが該当するか**  
-`.yamibaito/prompts/oyabun.md:45`、`.yamibaito/prompts/oyabun.md:131`、`.yamibaito/prompts/waka.md:62`、`.yamibaito/prompts/waka.md:105`。
-
-**どう直すか**  
-共通仕様を `.yamibaito/config.yaml` の `protocols.send_keys` に集約し、prompt は参照のみとする。`method` は `two_step_send_keys` に統一する。
-
-## 将来対応の詳細
-
-### dashboard の状態モデル分離
-**何が問題か**  
-現在の dashboard 生成は Python 内で Markdown 文字列を組み立てる方式で、表示列追加や履歴検索を入れるたびに描画ロジックまで変更が必要になる。
-
-**どこが該当するか**  
-`scripts/yb_collect.sh:205`、`scripts/yb_collect.sh:219`、`scripts/yb_collect.sh:227`、`dashboard.md:4`。
-
-**どう直すか**  
-`state.json` を唯一の truth source にし、dashboard は renderer が描画する成果物へ分離する。履歴は `dashboard_history.jsonl` に append し、CLI フィルタは state 参照で実装する。
-
-## 実行ロードマップ
-
-1. Day 1-2: `yb_collect` 誤リセット防御と `yb_start` readiness check を実装し、既存運用での安全性を先に確保する。  
-2. Day 3-4: `grep` shim 廃止、`panes.json` 正規化、`prompts` 単一ソース化を適用し、構成の破綻ポイントを減らす。  
-3. Week 2: 構造化ログ、排他制御、stale cleanup、version 管理を導入し、運用トラブル時の復旧時間を短縮する。  
-4. Week 3+: dashboard の state + renderer 分離と skill 運用高度化を進め、将来機能追加の変更コストを下げる。
-
-## 参照レポート
-
-- `.yamibaito/queue_agile-improve/reports/worker_001_report.yaml`
-- `.yamibaito/queue_agile-improve/reports/worker_002_report.yaml`
-- `.yamibaito/queue_agile-improve/reports/worker_003_report.yaml`
-- `.yamibaito/queue_agile-improve/reports/worker_004_report.yaml`
+# cmd_0033 + cmd_0034 統合改善レポート
+
+作成日: 2026-03-17  
+対象: `cmd_0033`（システム堅牢性）+ `cmd_0034`（性能改善）
+
+## データ出典と欠損状況
+
+| 区分 | 状態 | 出典 |
+|---|---|---|
+| cmd_0033 実装レポート（5タスク） | **データ未回収**（レビュー上書き + 未コミット） | 間接情報のみ使用（`docs/improvement-report.md`、`docs/improvement-proposals.md`、`.yamibaito/feedback/waka.md`、`.yamibaito/queue/director_to_planner.yaml`） |
+| cmd_0034 task_001（スループット） | 回収済み（スナップショット） | 実装者スナップショット（`.yamibaito/queue/reports/worker_001_report.yaml` の `cmd_0034_task_001` notes、collect によるリセット前に読み取り） + `dashboard.md` のレビュー記録 |
+| cmd_0034 task_003（タスク分割） | **部分回収**（レビュー記録のみ） | `dashboard.md` の「親分の裁き待ち」レビュー6観点 |
+| cmd_0034 task_004（プロンプト工学） | 回収済み（フル） | `.yamibaito/queue/reports/worker_004_report.yaml` |
+| cmd_0034 task_002（LLM APIコスト効率） | **データ未回収** | 実装レポート消失 |
+| cmd_0034 task_005（パイプライン最適化） | **データ未回収** | 実装レポート消失 |
+
+> 注記: 本レポートの cmd_0033 セクションは「直接成果物の復元」ではなく、先行調査成果を根拠にした再構成である。
+
+## 1. エグゼクティブサマリ
+
+- cmd_0034 の全体 wall-clock は **1763秒**（19:25:39 → 19:55:02）。ボトルネックは dispatch 自体ではなく、前段の配布スキュー（58秒）と後段のロングテール（1worker区間 848秒）。
+- 5並列は成立したが、dispatch完了後の平均同時稼働は **2.15**。後半 53.7%（848/1578秒）が実質逐次化した。
+- 品質ゲートは 1ラウンド平均 **598秒**（481秒/715秒実績）。cmd_0033 では追加 review が少なくとも 6 回発生し、待ち時間とトークンを増幅。
+- ロールプロンプトは長文化が顕著で、`waka.md` **8,686 token**、`wakashu.md` **5,798 token**。両者合計 14,484 token が主要コスト源。
+- task YAML の共通 prompt 定型は 117 token/件（可変込み 131）。cmd_0034（5件）だけで 585〜655 token の重複送信が発生。
+- task_003（部分回収）では 17ケース表（合計23、平均1.35）と、低密度 description 群の `max_loop>=2` 発生率 **80%**（4/5）が確認され、分割品質と再作業率の関連が示された。
+- cmd_0033 の直接レポートは回収不能だが、先行調査の 15件計画（即対応8/次スプリント6/将来1）と追加12提案（C-1〜C-12）が残っており、堅牢化バックログは十分具体化済み。
+- cmd_0033 由来の運用インシデントとして、sandbox越境書込不可（WAKA-20260228020500）、レビュー時レポート競合（WAKA-20260316185000）、reworkで既存OK観点が回帰消失（WAKA-20260316191200）が確認された。
+- 優先度最上位は「再作業と競合を減らす運用ガード」（status自動付与、レビュー割当制約、rework指示テンプレ）で、次に「プロンプト圧縮と観測基盤」、最後に「基盤拡張（CI/DAG/マルチリポ/プラグイン）」が妥当。
+
+## 2. システム堅牢性（cmd_0033 の結果）
+
+### 2.1 現状の強み
+
+- 指揮系統（親分→若頭→若衆）と品質ゲートの枠組み自体は機能しており、高負荷時でも最終的に 5/5 task approve へ収束できている（WAKA-20260316191200）。
+- 先行調査で改善バックログが体系化されている。
+  - 15件計画（即対応8/次スプリント6/将来1）
+  - 追加12提案（C-1〜C-12、High 7 / Medium 5）
+- 既存進捗として 15件中 3件完了（prompts単一正本化、panes schema v2、dashboard atomic write）まで到達済み。
+- 堅牢性観点（アーキテクチャ、ワークフロー、コード品質、運用、スケーラビリティ）を `cmd_0033` 指示時点で明示的に定義しており、調査観点の抜け漏れが少ない。
+
+### 2.2 課題一覧
+
+| 観点 | 主要課題 | 根拠 |
+|---|---|---|
+| アーキテクチャ全体像 | 起動手順の固定sleep依存、collectリセット防御不足、`panes.json` nullable構造、restartの`grep` shim依存 | 先行調査 `docs/improvement-report.md` |
+| ワークフロー堅牢性 | レビュー時のレポート上書き競合、rework時の既存OK観点消失、品質ゲート再試行の長時間化 | WAKA-20260316185000 / WAKA-20260316191200 / cmd_0034実測 |
+| コード品質 | テスト自動化不足、prompt仕様重複、send-keys仕様の重複定義 | `docs/improvement-proposals.md` C-1 / 既存15計画 |
+| 運用面 | sandboxにより別リポジトリ書込不可、可観測性不足、セキュリティ監査の自動化不足 | WAKA-20260228020500 / C-11 |
+| スケーラビリティ | worker runtime固定、マルチリポ/DAG/プラグインの基盤未整備 | 既存15計画 + C-5/C-7/C-12 |
+
+### 2.3 改善提案（優先度・難易度・期待効果）
+
+> 難易度は本統合レポートで再整理（S/M/L）。
+
+| ID | 提案 | 優先度 | 難易度 | 期待効果 |
+|---|---|---|---|---|
+| R-01 | `yb_start` の readiness check 化（固定sleep廃止） | P0 | M | 起動 race 起因の初動失敗を低減 |
+| R-02 | `yb_collect` の task/reset ガード（task_id + parent_cmd_id 一致必須） | P0 | S | 誤リセットと task消失事故を防止 |
+| R-03 | レビュー割当制約（実装レポート参照対象 worker を同ラウンドレビュアーにしない） | P0 | S | レポート競合ゼロ化、レビュー失敗抑止 |
+| R-04 | rework 指示テンプレ（既存OK維持・差し替え禁止・統合追記）を標準化 | P0 | S | 回帰消失の抑止、再作業率低減 |
+| R-05 | 構造化ログ + event相関IDの導入 | P1 | M | 障害原因の追跡時間短縮 |
+| R-06 | テスト自動化基盤（unit + bash E2E + CI最小実行） | P1 | M | 回帰検知の前倒し、品質ゲート再試行削減 |
+| R-07 | セキュリティ監査自動化（gitleaks/semgrep/依存監査） | P1 | M | security観点の再現性向上 |
+| R-08 | `yb cleanup` + stale queue/report 寿命管理 | P1 | S | 複数セッション運用の安定化 |
+| R-09 | orchestrator version 埋め込み（`yb --version` + 生成物） | P1 | S | 障害時のトレーサビリティ確保 |
+| R-10 | worker runtime adapter（codex固定から脱却） | P2 | M | CLI拡張性・運用柔軟性の向上 |
+| R-11 | dashboard の state/renderer 分離 | P2 | L | 可視化機能拡張の変更コスト低減 |
+| R-12 | プラグイン拡張アーキテクチャ（C-12） | P3 | L | 中長期の外部拡張を容易化 |
+
+## 3. 性能改善（cmd_0034 の結果）
+
+### 3.0 データ完全性（cmd_0034）
+
+| task | 状態 | 利用可否 |
+|---|---|---|
+| task_001（スループット） | フルレポートあり | 利用可 |
+| task_002（LLM APIコスト効率） | **データ未回収** | 利用不可 |
+| task_003（タスク分割） | レビュー記録のみ | 部分利用 |
+| task_004（プロンプト工学） | フルレポートあり | 利用可 |
+| task_005（パイプライン最適化） | **データ未回収** | 利用不可 |
+
+### 3.1 スループット実測データ（時系列・並列度・品質ゲートコスト）
+
+#### 時系列
+
+| 指標 | 値 |
+|---|---|
+| cmd投入 | 2026-03-16T19:25:39 |
+| task YAML書込完了（5件） | 19:28:44（cmd投入から185秒） |
+| task書込スプレッド | 58秒（平均間隔 14.64秒） |
+| 最初の完了report | 19:33:53（cmd投入から494秒、最終YAML書込から309秒） |
+| 全5 worker implement 完了 | 19:55:02 |
+| 全体 wall-clock | **1763秒**（29分23秒） |
+
+#### 区間分解（1763秒基準）
+
+| 区間 | 時間 | 比率 |
+|---|---|---|
+| cmd投入 → task配布完了 | 185秒 | 10.49% |
+| task配布完了 → dispatch完了 | 0.1〜0.5秒 | 0.01〜0.03% |
+| dispatch完了 → 全5 worker完了 | 1577.5〜1577.9秒 | 89.43〜89.46% |
+| implement完了 → collect/通知完了 | 通常0.03〜1.0秒 / テール153秒 | 0.00〜0.06% / 8.67% |
+
+> 注: 区間値は小数秒を含むため、区間和の丸め方によっては 1 秒の差分が生じる。
+
+#### 並列度（dispatch完了後 19:28:44-19:55:02）
+
+| 同時稼働数 | 継続時間 |
+|---|---|
+| 5並列 | 309秒 |
+| 4並列 | 66秒 |
+| 3並列 | 20秒 |
+| 2並列 | 335秒 |
+| 1並列 | 848秒 |
+
+- 平均同時稼働数: **2.15**（3387 worker秒 / 1578秒）
+- 判定: ピーク5並列は成立するが、後半 53.7% が1worker稼働。
+
+#### 品質ゲートコスト
+
+| 指標 | 値 |
+|---|---|
+| rework実装完了→review approve | 481秒 / 715秒 |
+| 1ラウンド平均 | **598秒**（9分58秒） |
+| ループ統計（27エントリ/17cmd） | `max loop>1`: 4/14（28.6%）、`max loop=3`: 3/14（21.4%） |
+| cmd_0033実績 | task_004(rework2), task_005(rework2), task_002(rework1), task_003(rework1), task_001(loop0) |
+| 追加review回数 | 少なくとも6回 |
+| review追加トークン | 3.5k〜4.5k token/ラウンド（概算） |
+
+### 3.2 プロンプトのトークンコスト分析
+
+| ファイル | 行数 | 推定token | front matter |
+|---|---:|---:|---:|
+| `oyabun.md` | 314 | 約2,834 | 99行（31.5%） |
+| `waka.md` | 755 | 約8,686 | 180行（23.8%） |
+| `wakashu.md` | 521 | 約5,798 | 117行（22.5%） |
+
+- `waka.md` + `wakashu.md` で **約14,484 token**。
+- ID重複（front matter/本文の二重記載）:
+  - oyabun: F001-F005（5/5）
+  - waka: F001-F006 + RACE-001（7/7）
+  - wakashu: F001-F005 + RACE-001（6/6）
+- task YAML 側の重複定型コスト:
+  - 35件中31件で同型テンプレ
+  - 共通定型 117 token/タスク（可変込み131）
+  - cmd_0034（5タスク）だけで 585〜655 token 重複
+
+### 3.3 タスク分割の質（task_003 部分回収）
+
+- 17ケース一覧で再現可能な定量評価が残存（合計 **23**、平均 **1.35**）。
+- RACE-001 回避は「高リスク条件」「有効だった回避条件」「分割戦略との関係」が維持されている。
+- description 情報密度分析:
+  - 低密度群 `cmd_0001,0031,0033,0043,0051`
+  - `max_loop>=2` 件数 4、発生率 **80%**（4/5）
+  - 表現は相関断定ではなく「強い定量的傾向」に修正済み
+- アンチパターン3類型:
+  1. 依存仕様なし並列化
+  2. rework時の差し替え更新
+  3. レース前提運用
+- 改善方向として `dependency_contract`、`split_type`、reworkテンプレ、`case_table` 標準化が提示されている。
+
+### 3.4 プロンプトエンジニアリングの知見
+
+- few-shot の効果差:
+  - 行動規範型（良/悪例対比） > 出力フォーマット型 > 操作手順型
+- rework要因のうち少なくとも5件は「曖昧さ/具体性不足」起因:
+  - `WAKA-20260227021529`
+  - `WAKA-20260303031822`
+  - `WAKA-20260306030320`
+  - `WAKA-20260313010500`
+  - `WAKA-20260316191200`
+- `review-checklist.yaml` は6観点を持つが、証拠要件・閾値・NG例が不足し判定ゆらぎを招きやすい。
+- 参照ドリフトは限定的で、実運用ファイルでは `.yamibaito/queue/director_to_planner.yaml` の `worker.md` 残存2箇所が主要対象。
+
+### 3.5 パイプライン最適化
+
+- **cmd_0034_task_005 はデータ未回収**（専用実装レポート消失）。
+- 利用可能な事実（task_001から確認可能な範囲）:
+  - dispatch固定遅延は 0.1〜0.5秒で軽微。
+  - 前段の配布処理（185秒）と配布スキュー（58秒）が実効スループットを圧迫。
+  - collect 読取ホットパスは 27.85ms（parse + diff + plan）だが、設定上テールは最大153秒。
+  - report単一ファイル上書きはレビュー並列時の競合原因（cmd_0033で実発生）。
+
+### 3.6 改善提案（優先度・難易度・期待効果）
+
+| ID | 提案 | 優先度 | 難易度 | 期待効果 |
+|---|---|---|---|---|
+| P-01 | task生成時 `status: assigned` 自動付与 + dispatch側フォールバック | P0 | S | 起動漏れ防止、並列起動安定化 |
+| P-02 | 5件書込み完了後の一括dispatch + `assigned_at` 記録 | P0 | S | 配布スキュー短縮、時系列可視化向上 |
+| P-03 | reworkテンプレ強化（既存OK維持・統合更新・forbidden_paths解釈） | P0 | M | rework頻度低下（目標: max loop>1 を 28.6%→15%） |
+| P-04 | レビュー割当の競合回避ルール固定化 | P0 | S | レポート競合再発防止 |
+| P-05 | `yb_dispatch`/`yb_run_worker` に JSONLログ + 軽量retry | P1 | M | 失敗検知の早期化、復旧時間短縮 |
+| P-06 | task単位 quality_gate override（軽微変更をskip可能に） | P1 | M | 1タスクあたり約8-12分 + 3.5k-4.5k token 削減 |
+| P-07 | `waka`/`wakashu` のコア/付録分離（30-40%圧縮） | P1 | M | 約4,000〜5,800 token 削減 |
+| P-08 | front matter/本文重複の削減 + task prompt共通定型吸収 | P1 | S | 117 token/タスク以上の継続削減 |
+| P-09 | レビューチェックリスト具体化（証拠・閾値・NG例） | P1 | M | 判定ばらつき抑制、再作業削減 |
+| P-10 | 分割メタ情報標準化（`dependency_contract`/`split_type`/`case_table`） | P1 | M | RACE-001回避と再現性向上 |
+| P-11 | `yb_collect` インクリメンタル化（差分再解析） | P2 | L | 件数増加時の線形劣化を緩和 |
+| P-12 | report保存方式を worker上書きから分離（task単位履歴） | P2 | L | 並列レビュー安全性向上 |
+
+## 4. 統合優先度マトリクス（cmd_0033 + cmd_0034 横断）
+
+| 順位 | 提案 | 出典 | 優先 | 難易度 | 主効果 |
+|---:|---|---|---|---|---|
+| 1 | P-01: task生成時 `status: assigned` 自動付与 + dispatchフォールバック | cmd_0034 task_001 | P0 | S | 起動漏れ防止 |
+| 2 | R-03: レビュー割当競合回避（実装者を同ラウンドレビュアー除外） | cmd_0033（WAKA-20260316185000） | P0 | S | レポート競合ゼロ化 |
+| 3 | R-04: rework指示テンプレ標準化（既存OK維持・統合追記） | cmd_0033（WAKA-20260316191200） + cmd_0034 task_001 | P0 | S | 回帰rework低減 |
+| 4 | R-02: `yb_collect` resetガード（task/parent一致必須） | cmd_0033 先行調査（`docs/improvement-report.md`） | P0 | S | task消失事故防止 |
+| 5 | R-01: `yb_start` readiness check 化 | cmd_0033 先行調査（`docs/improvement-report.md`） | P0 | M | 起動安定化 |
+| 6 | P-02: 5件配布後の一括dispatch + `assigned_at` 記録 | cmd_0034 task_001 | P0 | S | 配布スキュー短縮 |
+| 7 | P-04: レビュー割当の競合回避ルール固定化 | cmd_0034 task_001 | P0 | S | レポート競合再発防止 |
+| 8 | P-03: reworkテンプレ強化（既存OK維持・統合更新・forbidden_paths解釈） | cmd_0034 task_004 + cmd_0033（WAKA-20260316191200） | P0 | M | rework頻度低下 |
+| 9 | P-09: レビューチェックリスト具体化（証拠・閾値・NG例） | cmd_0034 task_004 | P1 | M | 判定ばらつき抑制 |
+| 10 | P-10: 分割メタ情報標準化（`dependency_contract`/`split_type`/`case_table`） | cmd_0034 task_003 | P1 | M | 分割品質向上 |
+| 11 | P-07: `waka`/`wakashu` のコア/付録分離 | cmd_0034 task_004 | P1 | M | token削減 |
+| 12 | P-08: front matter/本文重複削減 + task prompt共通定型吸収 | cmd_0034 task_004 | P1 | S | token削減・保守性向上 |
+| 13 | P-05: `yb_dispatch`/`yb_run_worker` に JSONLログ + 軽量retry | cmd_0034 task_001 | P1 | M | 失敗検知の早期化 |
+| 14 | P-06: task単位 quality_gate override（軽微変更をskip可能に） | cmd_0034 task_001 | P1 | M | レビュー待ち時間削減 |
+| 15 | R-05: 構造化ログ + event相関IDの導入 | cmd_0033 先行調査（`docs/improvement-report.md`） | P1 | M | 障害原因の追跡時間短縮 |
+| 16 | R-06: テスト自動化基盤（unit + bash E2E + CI最小実行） | C-1（`docs/improvement-proposals.md`） | P1 | M | 回帰検知の前倒し |
+| 17 | R-07: セキュリティ監査自動化（gitleaks/semgrep/依存監査） | C-11（`docs/improvement-proposals.md`） | P1 | M | security観点の再現性向上 |
+| 18 | R-08: `yb cleanup` + stale queue/report 寿命管理 | cmd_0033 先行調査（`docs/improvement-report.md`） | P1 | S | 複数セッション運用の安定化 |
+| 19 | R-09: orchestrator version 埋め込み（`yb --version` + 生成物） | cmd_0033 先行調査（`docs/improvement-report.md`） | P1 | S | 障害時トレーサビリティ確保 |
+| 20 | P-11: `yb_collect` インクリメンタル化（差分再解析） | cmd_0034 task_001 | P2 | L | 件数増加時の線形劣化を緩和 |
+| 21 | P-12: report保存方式を worker上書きから分離（task単位履歴） | cmd_0034 task_001 | P2 | L | 並列レビュー安全性向上 |
+| 22 | R-10: worker runtime adapter（codex固定から脱却） | C-5（`docs/improvement-proposals.md`） | P2 | M | CLI拡張性・運用柔軟性向上 |
+| 23 | R-11: dashboard の state/renderer 分離 | cmd_0033 先行調査（`docs/improvement-report.md`） | P2 | L | 可視化機能拡張の変更コスト低減 |
+| 24 | R-12: プラグイン拡張アーキテクチャ | C-12（`docs/improvement-proposals.md`） | P3 | L | 中長期の外部拡張を容易化 |
+
+## 5. 推奨アクションプラン（何から手をつけるか）
+
+### フェーズ1（直近 1 週間）
+
+1. `status: assigned` 自動付与 + dispatchフォールバックを実装。
+2. レビュー割当制約と reworkテンプレを運用ルールに反映。
+3. `yb_collect` resetガードを実装し、task消失事故を封じる。
+4. readiness check 化で起動 race を抑止。
+
+**狙い**: まず「止まる・消える・競合する」を潰し、再作業ループの入口を減らす。
+
+### フェーズ2（2〜4週間）
+
+1. レビューチェックリスト具体化、分割メタ標準化（`dependency_contract` 等）を導入。
+2. プロンプト圧縮（コア/付録分離、重複削減）を実施。
+3. JSONLログ/相関ID と task単位 quality_gate override を実装。
+4. C-1（テスト基盤）と C-11（セキュリティ監査）を最小構成で着手。
+
+**狙い**: 「遅い・高い・判定ぶれる」を定量で改善し、改善サイクルを速める。
+
+### フェーズ3（1〜3か月）
+
+1. `yb_collect` インクリメンタル化、report履歴分離を実装。
+2. runtime adapter、マルチリポ、DAG、plugin など拡張基盤を段階導入。
+3. dashboard state/renderer 分離とリアルタイム可視化を推進。
+
+**狙い**: 中長期のスケール運用に備え、構造的ボトルネックを解消する。
+
+---
+
+## 付記: 未回収データの取り扱い
+
+- `cmd_0034_task_002`（LLM APIコスト効率）と `cmd_0034_task_005`（パイプライン最適化）は実装レポートが回収できず、専用分析は未実施。
+- 本レポートでの記述は、回収済みデータ（task_001/task_004、task_003レビュー記録）に限定している。
+- cmd_0033 は直接成果物が消失しているため、先行調査成果の引用再構成であり、直接復元ではない。

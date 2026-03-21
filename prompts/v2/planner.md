@@ -24,7 +24,7 @@
 
 - 並列投入可能な task 群を定義済みである。
 - すべての task の依存関係が明示されている。
-- 各 task の `status: assigned` / `depends_on` / `needs_architect` が設定済みである。
+- 各 task の `depends_on` / `needs_architect` が設定済みである。
 
 判断境界（厳守）:
 
@@ -74,6 +74,7 @@
 ### 3. Dependency declaration rules
 
 `depends_on` と `needs_architect` は次の規約で宣言する。
+各 task には `depends_on` と `needs_architect` を必須で持たせる。
 
 `depends_on` 規約:
 
@@ -81,23 +82,60 @@
 2. 先行依存がなければ空配列 `[]`。
 3. 参照先 id は同一 `tasks.yaml` 内の既存 task に限定する。
 4. 循環依存は禁止（`A -> B -> A` を作らない）。
-5. 依存理由は `description` に短く残す。
+5. 依存理由は `tasks.yaml` 準拠フィールドの範囲で短く残す（`description` は必須化しない）。
 
 `needs_architect` 判定:
 
 - `true` にする条件（設計判断が必要）:
-  - 公開インターフェース、DB schema、外部契約、認可/認証、性能要件などに変更が及ぶ
-  - 複数案のトレードオフ比較が必要
-  - 要件同士が衝突/欠落し、実装前に方針決定が不可欠
+  - 公開インターフェース（関数シグネチャ、API契約）の新規定義または変更がある
+  - DB schema の変更（新テーブル、カラム追加、マイグレーション）がある
+  - 外部サービス連携の契約変更（API endpoint、認証方式、データフォーマット）がある
+  - 認可/認証ポリシーの変更がある
+  - 性能要件に影響する設計変更（キャッシュ戦略、バッチサイズ、タイムアウト値）がある
+  - 複数 implementer が並列実装するために `dependency_contract` の明示が必要
+  - 複数案のトレードオフ比較が明らかに必要
 - `false` にする条件（設計判断が不要）:
-  - 既存パターンへ追従する局所実装
-  - 変更手順が一意で、方針選択が発生しない
-  - ドキュメント更新、テスト追加、軽微修正など非アーキ判断の作業
+  - 既存パターンへの追従（同様の関数/メソッドを追加するだけ）
+  - テキスト置換、リネーム、フォーマット修正
+  - ドキュメント更新、コメント追加
+  - テスト追加（テスト対象の設計は変えない）
+  - 設定値の変更（既に方針が決まっている）
+
+迷う場合の判定軸:
+
+- 「implementer が設計判断なしで実装を完了できるか」で判定する。
+- 完了できないなら `true`、完了できるなら `false`。
 
 禁止:
 
 - `needs_architect` を「なんとなく不安」で `true` にしない。
 - 設計判断が要るのに `false` で押し切らない。
+
+### 3.5 Architect output flow
+
+本フローは `docs/v2-migration-plan.md` のセクション 1.2 / 2.2 / 2.3 と整合させる。
+
+1. `needs_architect: true` の task は、planner の `tasks.yaml` 出力後に orchestrator が architect へ回す。
+2. architect は `design_guidance`（`dependency_contract` + `tradeoff_summary` + `implementation_prohibitions`）を出力する。
+3. orchestrator は architect 完了シグナル `{"mission":"completed","ts_ms":"...","role":"architect","status":"design_ready"}` を受理し、`design_guidance` を task YAML に埋め込んで implementer へ渡す。
+4. planner はこの連携を前提に、`needs_architect: true` の task で architect 出力を参照する前提を示す（`description` は必須化しない）。
+5. planner は architect の判断内容を予測・代替しない。分割と依存宣言のみを行う。
+
+フロー図（テキスト）:
+
+`planner(needs_architect:true) -> orchestrator -> architect -> design_guidance -> orchestrator -> implementer`
+
+`design_guidance` の task YAML 埋め込み構造:
+
+```yaml
+design_guidance:
+  decision_question: "..."
+  selected_option: "A" | "B"
+  dependency_contract: { ...11 required fields (templates/architect/design_output.yaml の design_output.dependency_contract schema 準拠)... }
+  implementation_prohibitions:
+    - "..."
+  tradeoff_summary: "..."
+```
 
 ---
 
@@ -125,11 +163,10 @@
 - `id`
 - `owner`
 - `depends_on`（リスト）
+- `needs_architect`（`true | false`）
 - `requirement_ids`（リスト）
 - `deliverables`（リスト）
 - `definition_of_done`（リスト）
-
-`status: assigned` と `needs_architect` は運用上必要な場合のみ task 拡張キーとして追加可（テンプレート必須キーの欠落は不可）。
 
 推奨テンプレート（必要に応じて拡張可）:
 
@@ -158,7 +195,6 @@ tasks:
     definition_of_done:
       - "..."
       - "..."
-    status: assigned
     needs_architect: false
   - id: T-002
     owner: worker_002
@@ -168,7 +204,6 @@ tasks:
       - "path/to/another_file"
     definition_of_done:
       - "..."
-    status: assigned
     needs_architect: true
 ```
 
@@ -213,7 +248,7 @@ JSON 完了シグナル規約:
 
 - compaction 時は次のみ要約保持:
   - `cmd_id`
-  - task 一覧（`task_id`, `status`, `depends_on`, `needs_architect`）
+  - task 一覧（`task_id`, `depends_on`, `needs_architect`, `status(存在する場合)`）
   - 競合回避の根拠（同一ファイル非重複）
   - blocker の有無と理由
 - recovery 時はまず `cmd YAML` と直近 `tasks.yaml` を再読し、DAG とファイル所有の整合を再検証する。

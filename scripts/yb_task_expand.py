@@ -6,6 +6,9 @@ from __future__ import annotations
 import datetime as dt
 import re
 import sys
+import tempfile
+import textwrap
+import unittest
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -13,6 +16,19 @@ from typing import Any, Dict, List, Tuple
 LIST_FIELDS_TASK = {"depends_on", "requirement_ids", "deliverables", "definition_of_done"}
 LIST_FIELDS_REQUIREMENT = {"acceptance"}
 WORKER_ID_PATTERN = re.compile(r"^worker_[0-9]{3}$")
+DEPENDENCY_CONTRACT_REQUIRED_FIELDS = (
+    "contract_name",
+    "provider_module",
+    "consumer_modules",
+    "allowed_dependency_direction",
+    "forbidden_dependency_direction",
+    "public_interfaces",
+    "data_contracts",
+    "error_contracts",
+    "timeout_contracts",
+    "observability_contracts",
+    "versioning_policy",
+)
 
 
 class ParseError(ValueError):
@@ -592,6 +608,160 @@ def _validate_owner_uniqueness(tasks: List[Dict[str, Any]]) -> None:
         seen[owner] = task_id
 
 
+def _load_yaml_module() -> Any:
+    try:
+        import yaml  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise ParseError(
+            "PyYAML is required when --design-output is used. Install with `pip install pyyaml`."
+        ) from exc
+    return yaml
+
+
+def _load_design_output(path: Path) -> Dict[str, Any]:
+    yaml = _load_yaml_module()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ParseError(f"Failed to read design output file: {path}: {exc}") from exc
+
+    try:
+        loaded = yaml.safe_load(raw) or {}
+    except Exception as exc:
+        raise ParseError(f"Failed to parse design output YAML: {path}: {exc}") from exc
+
+    if not isinstance(loaded, dict):
+        raise ParseError(f"design output root must be a mapping: {path}")
+
+    design_output = loaded.get("design_output")
+    if not isinstance(design_output, dict):
+        raise ParseError(f"design output missing mapping key 'design_output': {path}")
+
+    dependency_contract = design_output.get("dependency_contract")
+    if not isinstance(dependency_contract, dict):
+        raise ParseError("design_output.dependency_contract must be a mapping")
+
+    missing = [field for field in DEPENDENCY_CONTRACT_REQUIRED_FIELDS if field not in dependency_contract]
+    if missing:
+        raise ParseError(
+            "design_output.dependency_contract missing required field(s): " + ", ".join(missing)
+        )
+
+    return design_output
+
+
+def _task_matches_design_output(task_id: str, parent_cmd_id: str, design_task_id: str) -> bool:
+    design_task_id_clean = design_task_id.strip()
+    if not design_task_id_clean:
+        return False
+    if design_task_id_clean == task_id:
+        return True
+    return design_task_id_clean == f"{parent_cmd_id}_{task_id}"
+
+
+def _build_tradeoff_summary(design_output: Dict[str, Any]) -> str:
+    selection_reason = str(design_output.get("selection_reason") or "").strip()
+    if selection_reason:
+        return selection_reason
+
+    selected_option = str(design_output.get("selected_option") or "").strip()
+    tradeoff_table = design_output.get("tradeoff_table")
+    if isinstance(tradeoff_table, dict):
+        assessments = tradeoff_table.get("assessments")
+        if isinstance(assessments, list) and assessments:
+            return f"selected_option={selected_option or '(unspecified)'}; assessments={len(assessments)}"
+
+    if selected_option:
+        return f"selected_option={selected_option}"
+    return ""
+
+
+def _build_design_guidance(design_output: Dict[str, Any]) -> Dict[str, Any]:
+    implementation_prohibitions = design_output.get("implementation_prohibitions")
+    if not isinstance(implementation_prohibitions, list):
+        raise ParseError("design_output.implementation_prohibitions must be a list")
+
+    dependency_contract = design_output.get("dependency_contract")
+    if not isinstance(dependency_contract, dict):
+        raise ParseError("design_output.dependency_contract must be a mapping")
+
+    nfr_interpretation = design_output.get("nfr_interpretation")
+    if not isinstance(nfr_interpretation, dict):
+        raise ParseError("design_output.nfr_interpretation must be a mapping")
+
+    tradeoff_table = design_output.get("tradeoff_table")
+    if not isinstance(tradeoff_table, dict):
+        raise ParseError("design_output.tradeoff_table must be a mapping")
+
+    decision_question = str(design_output.get("decision_question") or "").strip()
+    if not decision_question:
+        raise ParseError("design_output.decision_question must be non-empty")
+
+    selected_option = str(design_output.get("selected_option") or "").strip()
+    if not selected_option:
+        raise ParseError("design_output.selected_option must be non-empty")
+
+    return {
+        "task_id": str(design_output.get("task_id") or "").strip(),
+        "cmd_id": str(design_output.get("cmd_id") or "").strip(),
+        "decision_question": decision_question,
+        "selected_option": selected_option,
+        "selection_reason": str(design_output.get("selection_reason") or "").strip(),
+        "rejection_reason": str(design_output.get("rejection_reason") or "").strip(),
+        "dependency_contract": dependency_contract,
+        "nfr_interpretation": nfr_interpretation,
+        "implementation_prohibitions": implementation_prohibitions,
+        "tradeoff_summary": _build_tradeoff_summary(design_output),
+        "tradeoff_table": tradeoff_table,
+        "implementer_readiness_confirmed": design_output.get("implementer_readiness_confirmed") is True,
+    }
+
+
+def _resolve_design_guidance_map(
+    tasks: List[Dict[str, Any]],
+    parent_cmd_id: str,
+    design_output: Dict[str, Any] | None,
+) -> Dict[str, Dict[str, Any]]:
+    if design_output is None:
+        return {}
+
+    needs_architect_tasks = [task for task in tasks if task.get("needs_architect")]
+    if not needs_architect_tasks:
+        raise ParseError("--design-output was provided, but tasks.yaml has no task with needs_architect: true")
+
+    design_cmd_id = str(design_output.get("cmd_id") or "").strip()
+    if not design_cmd_id:
+        raise ParseError("design_output.cmd_id must be non-empty")
+    if design_cmd_id != parent_cmd_id:
+        raise ParseError(
+            f"design_output.cmd_id '{design_cmd_id}' does not match parent cmd id '{parent_cmd_id}'"
+        )
+
+    design_task_id = str(design_output.get("task_id") or "").strip()
+    if not design_task_id:
+        raise ParseError("design_output.task_id must be non-empty")
+
+    matched_task_ids: List[str] = []
+    for task in needs_architect_tasks:
+        task_id = task["id"]
+        if _task_matches_design_output(task_id, parent_cmd_id, design_task_id):
+            matched_task_ids.append(task_id)
+
+    if not matched_task_ids:
+        known_ids = ", ".join(task["id"] for task in needs_architect_tasks)
+        raise ParseError(
+            "design_output.task_id did not match any needs_architect task. "
+            f"design_output.task_id='{design_task_id}', needs_architect tasks=[{known_ids}]"
+        )
+    if len(matched_task_ids) >= 2:
+        raise ParseError(
+            "design_output.task_id matched multiple needs_architect tasks: " + ", ".join(matched_task_ids)
+        )
+
+    guidance = _build_design_guidance(design_output)
+    return {matched_task_ids[0]: guidance}
+
+
 def _yaml_quote(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
@@ -606,6 +776,28 @@ def _emit_string_list(lines: List[str], indent: int, key: str, values: List[str]
     lines.append(prefix)
     for value in values:
         lines.append(" " * (indent + 2) + f"- {_yaml_quote(value)}")
+
+
+def _emit_optional_mapping(lines: List[str], indent: int, key: str, value: Dict[str, Any] | None) -> None:
+    prefix = " " * indent + f"{key}:"
+    if value is None:
+        lines.append(prefix + " null")
+        return
+
+    yaml = _load_yaml_module()
+    dumped = yaml.safe_dump(
+        value,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    ).rstrip()
+
+    lines.append(prefix)
+    if dumped:
+        for raw_line in dumped.splitlines():
+            lines.append(" " * (indent + 2) + raw_line)
+        return
+    lines.append(" " * (indent + 2) + "{}")
 
 
 def _format_gate_suffix(task_id: str, index: int) -> str:
@@ -636,6 +828,7 @@ def _build_description(
     objective: str,
     task: Dict[str, Any],
     req_map: Dict[str, Dict[str, Any]],
+    design_guidance: Dict[str, Any] | None,
 ) -> str:
     lines: List[str] = []
     lines.append(f"tasks.yaml の {task['id']} を実装する。")
@@ -670,6 +863,30 @@ def _build_description(
     else:
         lines.append("- (none)")
 
+    lines.append("")
+    lines.append("## Architect")
+    needs_architect = bool(task.get("needs_architect"))
+    lines.append(f"- needs_architect: {'true' if needs_architect else 'false'}")
+    if needs_architect and design_guidance is None:
+        lines.append("- design_guidance: pending")
+    elif design_guidance is not None:
+        lines.append("- design_guidance: embedded")
+
+    if design_guidance is not None:
+        yaml = _load_yaml_module()
+        lines.append("")
+        lines.append("--- ARCHITECT DESIGN GUIDANCE ---")
+        dumped = yaml.safe_dump(
+            design_guidance,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        ).rstrip()
+        if dumped:
+            lines.extend(dumped.splitlines())
+        else:
+            lines.append("{}")
+
     return "\n".join(lines)
 
 
@@ -703,6 +920,7 @@ def _render_worker_yaml(
     req_map: Dict[str, Dict[str, Any]],
     index: int,
     objective: str,
+    design_guidance: Dict[str, Any] | None,
 ) -> str:
     worker_id = task["owner"]
     local_task_id = task["id"]
@@ -713,7 +931,7 @@ def _render_worker_yaml(
     deliverables = task.get("deliverables", [])
 
     title = _build_title(task, req_map)
-    description = _build_description(objective, task, req_map)
+    description = _build_description(objective, task, req_map, design_guidance)
     prompt = _build_prompt(queue_rel, worker_id)
 
     lines: List[str] = []
@@ -726,6 +944,8 @@ def _render_worker_yaml(
     lines.append(f"  status: {status}")
     lines.append("")
     lines.append(f"  title: {_yaml_quote(title)}")
+    lines.append(f"  needs_architect: {'true' if bool(task.get('needs_architect')) else 'false'}")
+    _emit_optional_mapping(lines, 2, "design_guidance", design_guidance)
     lines.append("  description: |")
     for text_line in description.splitlines():
         lines.append(f"    {text_line}")
@@ -766,6 +986,255 @@ def _render_worker_yaml(
     return "\n".join(lines) + "\n"
 
 
+class DesignOutputRegressionTests(unittest.TestCase):
+    def _write(self, path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    def _tasks_yaml(self, needs_architect: bool) -> str:
+        needs_architect_value = "true" if needs_architect else "false"
+        return textwrap.dedent(
+            f"""\
+            version: 1
+            epic: cmd_0001
+            objective: "route behavior regression"
+            requirements:
+              - id: FR-1
+                title: "planner requirement"
+                acceptance:
+                  - "acceptance criterion"
+            tasks:
+              - id: T-001
+                owner: worker_001
+                depends_on: []
+                requirement_ids: [FR-1]
+                deliverables: ["scripts/yb_task_expand.py"]
+                definition_of_done: ["done"]
+                needs_architect: {needs_architect_value}
+            """
+        )
+
+    def _design_output_yaml(self, *, cmd_id: str, task_id: str) -> str:
+        return textwrap.dedent(
+            f"""\
+            schema_version: 1
+            design_output:
+              task_id: "{task_id}"
+              cmd_id: "{cmd_id}"
+              decision_question: "A or B?"
+              in_scope: "in"
+              out_of_scope: "out"
+              assumptions: ["assumption"]
+              evidence: ["evidence"]
+              selected_option: "A"
+              selection_reason: "clear win"
+              rejection_reason: "B rejected"
+              dependency_contract:
+                contract_name: "contract"
+                provider_module: "provider"
+                consumer_modules: ["consumer"]
+                allowed_dependency_direction: "provider -> consumer"
+                forbidden_dependency_direction: "consumer -> provider"
+                public_interfaces: ["Provider.run()"]
+                data_contracts: ["DTO v1"]
+                error_contracts: ["DomainError"]
+                timeout_contracts: ["p95 < 250ms"]
+                observability_contracts: ["trace_id required"]
+                versioning_policy: "semver"
+              nfr_interpretation:
+                security: "inherit"
+                timeout_reliability: "inherit"
+                observability: "inherit"
+              implementation_prohibitions: ["direct import"]
+              tradeoff_table:
+                dimensions: ["latency"]
+                policy_a: "A"
+                policy_b: "B"
+                assessments: ["A wins"]
+              implementer_readiness_confirmed: true
+            """
+        )
+
+    def _design_output_payload(self) -> Dict[str, Any]:
+        return {
+            "task_id": "T-001",
+            "cmd_id": "cmd_0001",
+            "decision_question": "A or B?",
+            "selected_option": "A",
+            "selection_reason": "clear win",
+            "rejection_reason": "B rejected",
+            "dependency_contract": {},
+            "nfr_interpretation": {},
+            "implementation_prohibitions": [],
+            "tradeoff_table": {},
+            "implementer_readiness_confirmed": True,
+        }
+
+    def _run_expand(
+        self,
+        *,
+        root: Path,
+        tasks_path: Path,
+        queue_dir: Path,
+        design_output_path: Path | None = None,
+    ) -> int:
+        argv = [
+            "--tasks-file",
+            str(tasks_path),
+            "--queue-dir",
+            str(queue_dir),
+            "--repo-root",
+            str(root),
+            "--cmd-id",
+            "cmd_0001",
+        ]
+        if design_output_path is not None:
+            argv.extend(["--design-output", str(design_output_path)])
+        return run(argv)
+
+    def _read_worker_task_top_level(self, worker_yaml: str) -> Dict[str, str]:
+        fields: Dict[str, str] = {}
+        in_task = False
+        for raw_line in worker_yaml.splitlines():
+            line = raw_line.rstrip("\n")
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+
+            indent = len(line) - len(line.lstrip(" "))
+            if not in_task:
+                if indent == 0 and stripped == "task:":
+                    in_task = True
+                continue
+
+            if indent == 0 and stripped.endswith(":"):
+                break
+            if indent != 2 or ":" not in stripped:
+                continue
+
+            key, raw_value = stripped.split(":", 1)
+            fields[key.strip()] = raw_value.strip()
+        return fields
+
+    def test_without_design_output_keeps_backward_compatible_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = root / "tasks.yaml"
+            queue_dir = root / "queue"
+            self._write(tasks_path, self._tasks_yaml(needs_architect=True))
+
+            exit_code = self._run_expand(root=root, tasks_path=tasks_path, queue_dir=queue_dir)
+            self.assertEqual(exit_code, 0)
+
+            worker_yaml = (queue_dir / "tasks" / "worker_001.yaml").read_text(encoding="utf-8")
+            task_fields = self._read_worker_task_top_level(worker_yaml)
+            self.assertEqual(task_fields.get("needs_architect"), "true")
+            self.assertEqual(task_fields.get("design_guidance"), "null")
+            self.assertIn("design_guidance: pending", worker_yaml)
+
+    def test_design_output_is_embedded_for_matching_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = root / "tasks.yaml"
+            design_path = root / "design_output.yaml"
+            queue_dir = root / "queue"
+            self._write(tasks_path, self._tasks_yaml(needs_architect=True))
+            self._write(design_path, self._design_output_yaml(cmd_id="cmd_0001", task_id="T-001"))
+
+            exit_code = self._run_expand(
+                root=root,
+                tasks_path=tasks_path,
+                queue_dir=queue_dir,
+                design_output_path=design_path,
+            )
+            self.assertEqual(exit_code, 0)
+
+            worker_yaml = (queue_dir / "tasks" / "worker_001.yaml").read_text(encoding="utf-8")
+            task_fields = self._read_worker_task_top_level(worker_yaml)
+            self.assertEqual(task_fields.get("needs_architect"), "true")
+            self.assertEqual(task_fields.get("design_guidance"), "")
+            self.assertIn("    cmd_id: cmd_0001", worker_yaml)
+            self.assertIn("    task_id: T-001", worker_yaml)
+            self.assertIn("    dependency_contract:", worker_yaml)
+
+    def test_design_output_cmd_id_mismatch_raises_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = root / "tasks.yaml"
+            design_path = root / "design_output.yaml"
+            queue_dir = root / "queue"
+            self._write(tasks_path, self._tasks_yaml(needs_architect=True))
+            self._write(design_path, self._design_output_yaml(cmd_id="cmd_9999", task_id="T-001"))
+
+            with self.assertRaisesRegex(ParseError, "does not match parent cmd id"):
+                self._run_expand(
+                    root=root,
+                    tasks_path=tasks_path,
+                    queue_dir=queue_dir,
+                    design_output_path=design_path,
+                )
+
+    def test_design_output_task_id_mismatch_raises_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = root / "tasks.yaml"
+            design_path = root / "design_output.yaml"
+            queue_dir = root / "queue"
+            self._write(tasks_path, self._tasks_yaml(needs_architect=True))
+            self._write(design_path, self._design_output_yaml(cmd_id="cmd_0001", task_id="T-999"))
+
+            with self.assertRaisesRegex(ParseError, "did not match any needs_architect task"):
+                self._run_expand(
+                    root=root,
+                    tasks_path=tasks_path,
+                    queue_dir=queue_dir,
+                    design_output_path=design_path,
+                )
+
+    def test_build_design_guidance_rejects_non_list_implementation_prohibitions(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["implementation_prohibitions"] = "direct import"
+
+        with self.assertRaisesRegex(ParseError, "design_output.implementation_prohibitions must be a list"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_dependency_contract(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["dependency_contract"] = "contract"
+
+        with self.assertRaisesRegex(ParseError, "design_output.dependency_contract must be a mapping"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_nfr_interpretation(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["nfr_interpretation"] = "inherit"
+
+        with self.assertRaisesRegex(ParseError, "design_output.nfr_interpretation must be a mapping"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_tradeoff_table(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["tradeoff_table"] = ["A wins"]
+
+        with self.assertRaisesRegex(ParseError, "design_output.tradeoff_table must be a mapping"):
+            _build_design_guidance(design_output)
+
+    def test_route_keys_are_emitted_for_non_architect_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks_path = root / "tasks.yaml"
+            queue_dir = root / "queue"
+            self._write(tasks_path, self._tasks_yaml(needs_architect=False))
+
+            exit_code = self._run_expand(root=root, tasks_path=tasks_path, queue_dir=queue_dir)
+            self.assertEqual(exit_code, 0)
+
+            worker_yaml = (queue_dir / "tasks" / "worker_001.yaml").read_text(encoding="utf-8")
+            task_fields = self._read_worker_task_top_level(worker_yaml)
+            self.assertEqual(task_fields.get("needs_architect"), "false")
+            self.assertEqual(task_fields.get("design_guidance"), "null")
+
+
 def parse_cli(argv: List[str]) -> Dict[str, Any]:
     args: Dict[str, Any] = {
         "tasks_file": None,
@@ -773,13 +1242,14 @@ def parse_cli(argv: List[str]) -> Dict[str, Any]:
         "repo_root": ".",
         "session": "",
         "cmd_id": None,
+        "design_output": None,
         "dry_run": False,
     }
 
     idx = 0
     while idx < len(argv):
         token = argv[idx]
-        if token in {"--tasks-file", "--queue-dir", "--repo-root", "--session", "--cmd-id"}:
+        if token in {"--tasks-file", "--queue-dir", "--repo-root", "--session", "--cmd-id", "--design-output"}:
             if idx + 1 >= len(argv):
                 raise ParseError(f"Missing value for {token}")
             value = argv[idx + 1]
@@ -793,6 +1263,8 @@ def parse_cli(argv: List[str]) -> Dict[str, Any]:
                 args["session"] = value
             elif token == "--cmd-id":
                 args["cmd_id"] = value
+            elif token == "--design-output":
+                args["design_output"] = value
             idx += 2
             continue
 
@@ -831,6 +1303,12 @@ def run(argv: List[str]) -> int:
     if not parent_cmd_id:
         raise ParseError("Unable to determine parent_cmd_id: provide --cmd-id or set epic in tasks.yaml")
 
+    design_output: Dict[str, Any] | None = None
+    if cli["design_output"]:
+        design_output = _load_design_output(Path(cli["design_output"]))
+
+    design_guidance_map = _resolve_design_guidance_map(tasks, parent_cmd_id, design_output)
+
     assigned_at = dt.datetime.now().replace(microsecond=0).isoformat()
     objective = str(parsed.get("objective", ""))
     queue_rel = f".yamibaito/queue_{session}" if session else ".yamibaito/queue"
@@ -852,6 +1330,7 @@ def run(argv: List[str]) -> int:
             req_map=req_map,
             index=idx,
             objective=objective,
+            design_guidance=design_guidance_map.get(task["id"]),
         )
         rendered.append((worker_id, output_path, content))
 

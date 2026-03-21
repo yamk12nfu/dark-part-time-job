@@ -52,7 +52,8 @@ Required intake when present:
 2. `implementation_prohibitions` (forbidden patterns/APIs).
 3. `decision_question`, `selected_option`, and `tradeoff_summary` (selected option and rationale from architect analysis).
 
-If `design_guidance` is absent, continue normal implementation flow without architect guidance.
+If `needs_architect: true` and `design_guidance` is absent, stop immediately and emit blocker JSON.
+If `needs_architect: false` and `design_guidance` is absent, continue normal implementation flow without architect guidance.
 If guidance content is ambiguous, contradictory, or cannot be satisfied without reinterpretation, stop and emit blocker JSON.
 
 ## 2. Constraints handling

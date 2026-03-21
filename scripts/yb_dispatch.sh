@@ -385,7 +385,9 @@ def resolve_worker_needs_architect(worker_id, worker_needs_architect, plan_task_
     return worker_needs_architect
 
 def planner_route(has_architect_pane, needs_architect):
-    if has_architect_pane and needs_architect:
+    if needs_architect and not has_architect_pane:
+        return None
+    if needs_architect:
         return "architect"
     return "implementer"
 
@@ -404,6 +406,29 @@ def dispatch_implementer(worker_id, pane):
     if session_id:
         cmd += f' --session "{session_id}"'
     send_to_pane(f"{session}:{pane}", cmd)
+
+def should_skip_default_dispatch(resolved_needs_architect, design_guidance):
+    return resolved_needs_architect and not design_guidance
+
+def dispatch_default_workers(
+    active_worker_tasks,
+    dispatch_implementer_fn=None,
+    skip_reporter_fn=None,
+):
+    if dispatch_implementer_fn is None:
+        dispatch_implementer_fn = dispatch_implementer
+
+    for worker_id, pane, task_id, _, resolved_needs_architect, design_guidance in active_worker_tasks:
+        if should_skip_default_dispatch(resolved_needs_architect, design_guidance):
+            if skip_reporter_fn is None:
+                print(
+                    f"default: skip worker '{worker_id}' ({task_id}) because design_guidance is missing",
+                    file=sys.stderr,
+                )
+            else:
+                skip_reporter_fn(worker_id, task_id)
+            continue
+        dispatch_implementer_fn(worker_id, pane)
 
 def resolve_architect_agent():
     sys.path.insert(0, os.path.join(orch_root, "scripts", "lib"))
@@ -501,6 +526,11 @@ def dispatch_planner_workers(
     implementer_targets = []
     for worker_id, pane, task_id, task_path, resolved_needs_architect, _ in active_worker_tasks:
         route = planner_route(has_architect_pane, resolved_needs_architect)
+        if route is None:
+            return (
+                f"planner: blocked worker '{worker_id}' ({task_id}) because needs_architect=true "
+                "but architect pane is not configured"
+            )
         if route == "architect":
             architect_targets.append((worker_id, task_id, task_path))
             continue
@@ -510,14 +540,14 @@ def dispatch_planner_workers(
     if has_architect_pane and architect_targets:
         architect_agent = resolve_architect_agent_fn()
         if should_abort_architect_launch(has_architect_pane, architect_targets, architect_agent):
-            return False
+            return "architect pane is configured but architect command resolution failed"
 
     for worker_id, task_id, task_path in architect_targets:
         dispatch_architect_fn(architect_agent, worker_id, task_id, task_path)
     for worker_id, pane in implementer_targets:
         dispatch_implementer_fn(worker_id, pane)
 
-    return True
+    return None
 
 def run_smoke_tests():
     import tempfile
@@ -528,7 +558,38 @@ def run_smoke_tests():
             self.assertEqual(planner_route(True, True), "architect")
 
         def test_planner_dispatch_without_architect_pane(self):
-            self.assertEqual(planner_route(False, True), "implementer")
+            self.assertIsNone(planner_route(False, True))
+
+        def test_planner_blocked_worker_without_architect_pane_has_no_dispatch_side_effects(self):
+            active_worker_tasks = [
+                ("worker_001", "pane_worker_001", "cmd_0001_task_001", "/tmp/worker_001.yaml", True, False)
+            ]
+            dispatch_counts = {"architect": 0, "implementer": 0}
+
+            def fake_resolve_architect_agent():
+                return {"command": ["echo", "unused"]}
+
+            def fake_dispatch_architect(*_args):
+                dispatch_counts["architect"] += 1
+
+            def fake_dispatch_implementer(*_args):
+                dispatch_counts["implementer"] += 1
+
+            planner_error = dispatch_planner_workers(
+                active_worker_tasks,
+                False,
+                resolve_architect_agent_fn=fake_resolve_architect_agent,
+                dispatch_architect_fn=fake_dispatch_architect,
+                dispatch_implementer_fn=fake_dispatch_implementer,
+            )
+
+            self.assertEqual(
+                planner_error,
+                "planner: blocked worker 'worker_001' (cmd_0001_task_001) because needs_architect=true "
+                "but architect pane is not configured",
+            )
+            self.assertEqual(dispatch_counts["architect"], 0)
+            self.assertEqual(dispatch_counts["implementer"], 0)
 
         def test_architect_done_with_embedded_design_guidance(self):
             body = "\n".join(
@@ -629,7 +690,7 @@ def run_smoke_tests():
                 def fake_dispatch_implementer(*_args):
                     calls.append("implementer")
 
-                ok = dispatch_planner_workers(
+                planner_error = dispatch_planner_workers(
                     active_worker_tasks,
                     True,
                     resolve_architect_agent_fn=fake_resolve_architect_agent,
@@ -637,8 +698,34 @@ def run_smoke_tests():
                     dispatch_implementer_fn=fake_dispatch_implementer,
                 )
 
-            self.assertFalse(ok)
+            self.assertEqual(
+                planner_error,
+                "architect pane is configured but architect command resolution failed",
+            )
             self.assertEqual(calls, [])
+
+        def test_default_mode_dispatch_helper_skips_worker_without_design_guidance(self):
+            active_worker_tasks = [
+                ("worker_001", "pane_worker_001", "cmd_0001_task_001", "/tmp/worker_001.yaml", True, False)
+            ]
+            implementer_calls = 0
+            skipped_workers = []
+
+            def fake_dispatch_implementer(*_args):
+                nonlocal implementer_calls
+                implementer_calls += 1
+
+            def fake_skip_reporter(worker_id, task_id):
+                skipped_workers.append((worker_id, task_id))
+
+            dispatch_default_workers(
+                active_worker_tasks,
+                dispatch_implementer_fn=fake_dispatch_implementer,
+                skip_reporter_fn=fake_skip_reporter,
+            )
+
+            self.assertEqual(implementer_calls, 0)
+            self.assertEqual(skipped_workers, [("worker_001", "cmd_0001_task_001")])
 
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(DispatchSmokeTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
@@ -690,8 +777,9 @@ if dispatch_mode in {"planner", "architect_done"}:
 active_worker_tasks = collect_active_worker_tasks(workers, queue_dir, plan_task_map)
 
 if dispatch_mode == "planner":
-    if not dispatch_planner_workers(active_worker_tasks, bool(architect_pane)):
-        print("architect pane is configured but architect command resolution failed", file=sys.stderr)
+    planner_error = dispatch_planner_workers(active_worker_tasks, bool(architect_pane))
+    if planner_error:
+        print(planner_error, file=sys.stderr)
         sys.exit(1)
 elif dispatch_mode == "architect_done":
     for worker_id, pane, task_id, _, resolved_needs_architect, design_guidance in active_worker_tasks:
@@ -705,6 +793,5 @@ elif dispatch_mode == "architect_done":
             continue
         dispatch_implementer(worker_id, pane)
 else:
-    for worker_id, pane, _, _, _, _ in active_worker_tasks:
-        dispatch_implementer(worker_id, pane)
+    dispatch_default_workers(active_worker_tasks)
 PY

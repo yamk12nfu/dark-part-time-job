@@ -679,19 +679,19 @@ def _build_tradeoff_summary(design_output: Dict[str, Any]) -> str:
 def _build_design_guidance(design_output: Dict[str, Any]) -> Dict[str, Any]:
     implementation_prohibitions = design_output.get("implementation_prohibitions")
     if not isinstance(implementation_prohibitions, list):
-        implementation_prohibitions = []
+        raise ParseError("design_output.implementation_prohibitions must be a list")
 
     dependency_contract = design_output.get("dependency_contract")
     if not isinstance(dependency_contract, dict):
-        dependency_contract = {}
+        raise ParseError("design_output.dependency_contract must be a mapping")
 
     nfr_interpretation = design_output.get("nfr_interpretation")
     if not isinstance(nfr_interpretation, dict):
-        nfr_interpretation = {}
+        raise ParseError("design_output.nfr_interpretation must be a mapping")
 
     tradeoff_table = design_output.get("tradeoff_table")
     if not isinstance(tradeoff_table, dict):
-        tradeoff_table = {}
+        raise ParseError("design_output.tradeoff_table must be a mapping")
 
     return {
         "task_id": str(design_output.get("task_id") or "").strip(),
@@ -1041,6 +1041,21 @@ class DesignOutputRegressionTests(unittest.TestCase):
             """
         )
 
+    def _design_output_payload(self) -> Dict[str, Any]:
+        return {
+            "task_id": "T-001",
+            "cmd_id": "cmd_0001",
+            "decision_question": "A or B?",
+            "selected_option": "A",
+            "selection_reason": "clear win",
+            "rejection_reason": "B rejected",
+            "dependency_contract": {},
+            "nfr_interpretation": {},
+            "implementation_prohibitions": [],
+            "tradeoff_table": {},
+            "implementer_readiness_confirmed": True,
+        }
+
     def _run_expand(
         self,
         *,
@@ -1161,6 +1176,34 @@ class DesignOutputRegressionTests(unittest.TestCase):
                     queue_dir=queue_dir,
                     design_output_path=design_path,
                 )
+
+    def test_build_design_guidance_rejects_non_list_implementation_prohibitions(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["implementation_prohibitions"] = "direct import"
+
+        with self.assertRaisesRegex(ParseError, "design_output.implementation_prohibitions must be a list"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_dependency_contract(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["dependency_contract"] = "contract"
+
+        with self.assertRaisesRegex(ParseError, "design_output.dependency_contract must be a mapping"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_nfr_interpretation(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["nfr_interpretation"] = "inherit"
+
+        with self.assertRaisesRegex(ParseError, "design_output.nfr_interpretation must be a mapping"):
+            _build_design_guidance(design_output)
+
+    def test_build_design_guidance_rejects_non_mapping_tradeoff_table(self) -> None:
+        design_output = self._design_output_payload()
+        design_output["tradeoff_table"] = ["A wins"]
+
+        with self.assertRaisesRegex(ParseError, "design_output.tradeoff_table must be a mapping"):
+            _build_design_guidance(design_output)
 
     def test_route_keys_are_emitted_for_non_architect_task(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

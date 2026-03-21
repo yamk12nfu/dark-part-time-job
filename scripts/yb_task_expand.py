@@ -722,7 +722,9 @@ def _resolve_design_guidance_map(
         raise ParseError("--design-output was provided, but tasks.yaml has no task with needs_architect: true")
 
     design_cmd_id = str(design_output.get("cmd_id") or "").strip()
-    if design_cmd_id and design_cmd_id != parent_cmd_id:
+    if not design_cmd_id:
+        raise ParseError("design_output.cmd_id must be non-empty")
+    if design_cmd_id != parent_cmd_id:
         raise ParseError(
             f"design_output.cmd_id '{design_cmd_id}' does not match parent cmd id '{parent_cmd_id}'"
         )
@@ -743,9 +745,13 @@ def _resolve_design_guidance_map(
             "design_output.task_id did not match any needs_architect task. "
             f"design_output.task_id='{design_task_id}', needs_architect tasks=[{known_ids}]"
         )
+    if len(matched_task_ids) >= 2:
+        raise ParseError(
+            "design_output.task_id matched multiple needs_architect tasks: " + ", ".join(matched_task_ids)
+        )
 
     guidance = _build_design_guidance(design_output)
-    return {task_id: guidance for task_id in matched_task_ids}
+    return {matched_task_ids[0]: guidance}
 
 
 def _yaml_quote(value: str) -> str:

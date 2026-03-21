@@ -231,6 +231,20 @@ if not output_under_plan or not tasks_under_plan:
     )
     sys.exit(1)
 
+if dry_run:
+    os.makedirs(output_dir, exist_ok=True)
+    sample_tasks = os.path.join(repo_root, "templates", "plan", "sample_tasks.yaml")
+    if not os.path.isfile(sample_tasks):
+        eprint(f"Missing sample tasks template: {sample_tasks}")
+        sys.exit(1)
+    try:
+        shutil.copyfile(sample_tasks, tasks_output_path)
+    except OSError as exc:
+        eprint(f"Failed to copy sample tasks.yaml: {exc}")
+        sys.exit(1)
+    print(f"dry-run: copied sample tasks.yaml to {tasks_output_path}")
+    sys.exit(0)
+
 queue_file = os.path.join(queue_dir, "director_to_planner.yaml")
 if not os.path.isfile(queue_file):
     eprint(f"Missing director_to_planner.yaml: {queue_file}")
@@ -249,19 +263,6 @@ if not cmd_yaml_item:
     sys.exit(1)
 
 os.makedirs(output_dir, exist_ok=True)
-
-if dry_run:
-    sample_tasks = os.path.join(repo_root, "templates", "plan", "sample_tasks.yaml")
-    if not os.path.isfile(sample_tasks):
-        eprint(f"Missing sample tasks template: {sample_tasks}")
-        sys.exit(1)
-    try:
-        shutil.copyfile(sample_tasks, tasks_output_path)
-    except OSError as exc:
-        eprint(f"Failed to copy sample tasks.yaml: {exc}")
-        sys.exit(1)
-    print(f"dry-run: copied sample tasks.yaml to {tasks_output_path}")
-    sys.exit(0)
 
 planner_prompt_path = os.path.join(repo_root, "prompts", "v2", "planner.md")
 try:

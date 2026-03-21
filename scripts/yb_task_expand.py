@@ -693,11 +693,19 @@ def _build_design_guidance(design_output: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(tradeoff_table, dict):
         raise ParseError("design_output.tradeoff_table must be a mapping")
 
+    decision_question = str(design_output.get("decision_question") or "").strip()
+    if not decision_question:
+        raise ParseError("design_output.decision_question must be non-empty")
+
+    selected_option = str(design_output.get("selected_option") or "").strip()
+    if not selected_option:
+        raise ParseError("design_output.selected_option must be non-empty")
+
     return {
         "task_id": str(design_output.get("task_id") or "").strip(),
         "cmd_id": str(design_output.get("cmd_id") or "").strip(),
-        "decision_question": str(design_output.get("decision_question") or "").strip(),
-        "selected_option": str(design_output.get("selected_option") or "").strip(),
+        "decision_question": decision_question,
+        "selected_option": selected_option,
         "selection_reason": str(design_output.get("selection_reason") or "").strip(),
         "rejection_reason": str(design_output.get("rejection_reason") or "").strip(),
         "dependency_contract": dependency_contract,

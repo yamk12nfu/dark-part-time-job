@@ -1,0 +1,36 @@
+schema_version: 1
+design_output:
+  task_id: ""
+  cmd_id: ""
+  decision_question: ""
+  in_scope: ""
+  out_of_scope: ""
+  assumptions: []
+  evidence: []
+  selected_option: ""
+  selection_reason: ""
+  rejection_reason: ""
+  # dependency_contract の正規フィールドは以下11個
+  dependency_contract:
+    contract_name: ""
+    provider_module: ""
+    consumer_modules: []
+    allowed_dependency_direction: ""
+    forbidden_dependency_direction: ""
+    public_interfaces: []
+    data_contracts: []
+    error_contracts: []
+    timeout_contracts: []
+    observability_contracts: []
+    versioning_policy: ""
+  nfr_interpretation:
+    security: ""
+    timeout_reliability: ""
+    observability: ""
+  implementation_prohibitions: []
+  tradeoff_table:
+    dimensions: []
+    policy_a: ""
+    policy_b: ""
+    assessments: []
+  implementer_readiness_confirmed: false

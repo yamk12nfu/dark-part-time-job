@@ -1,0 +1,19 @@
+version: 1
+epic: EP-SAMPLE
+objective: "サンプル: dry-run テスト用 tasks.yaml"
+requirements:
+  - id: FR-1
+    title: "サンプル要件1"
+    acceptance:
+      - "テスト用の受入条件"
+tasks:
+  - id: T-001
+    owner: worker_001
+    depends_on: []
+    requirement_ids: [FR-1]
+    deliverables:
+      - "sample/output.txt"
+    definition_of_done:
+      - "dry-run テストが通ること"
+    status: assigned
+    needs_architect: false

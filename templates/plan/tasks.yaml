@@ -15,3 +15,22 @@ tasks:
     requirement_ids: [FR-1]
     deliverables: ["", ""]
     definition_of_done: ["", ""]
+    needs_architect: false
+    design_guidance: null
+    # design_guidance:
+    #   decision_question: "..."
+    #   selected_option: "A" | "B"
+    #   dependency_contract:
+    #     contract_name: "..."
+    #     provider_module: "..."
+    #     consumer_modules: ["..."]
+    #     allowed_dependency_direction: "..."
+    #     forbidden_dependency_direction: "..."
+    #     public_interfaces: ["..."]
+    #     data_contracts: ["..."]
+    #     error_contracts: ["..."]
+    #     timeout_contracts: ["..."]
+    #     observability_contracts: ["..."]
+    #     versioning_policy: "..."
+    #   implementation_prohibitions: [...]
+    #   tradeoff_summary: "..."

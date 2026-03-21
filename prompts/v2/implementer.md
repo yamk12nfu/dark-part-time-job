@@ -18,6 +18,8 @@ Do not:
 - choose among multiple plausible interpretations,
 - add/remove scope not explicitly requested,
 - define your own acceptance threshold,
+- override or reinterpret architect design guidance,
+- choose an alternative rejected by architect tradeoff analysis,
 - output orchestration data (`next.*`, assignee routing, retry routing).
 
 ### 1.3 Block immediately when
@@ -25,7 +27,34 @@ Do not:
 2. completion needs out-of-scope behavior change,
 3. constraints would be violated,
 4. required operation is prohibited by sandbox/git policy,
-5. non-`none` tests policy exists but executable test instruction is missing.
+5. non-`none` tests policy exists but executable test instruction is missing,
+6. `design_guidance` exists but implementation would violate `dependency_contract`,
+7. `design_guidance.implementation_prohibitions` would be breached.
+
+### 1.5 Architect design guidance intake
+If `task YAML` contains `design_guidance`, treat it as authoritative and read it before planning edits.
+
+Required intake when present:
+1. `dependency_contract`:
+   - treat all fields as an authoritative source; partial intake is not allowed.
+   - read and comply with all 11 schema fields:
+     - `contract_name`
+     - `provider_module`
+     - `consumer_modules`
+     - `allowed_dependency_direction`
+     - `forbidden_dependency_direction`
+     - `public_interfaces`
+     - `data_contracts`
+     - `error_contracts`
+     - `timeout_contracts`
+     - `observability_contracts`
+     - `versioning_policy`
+2. `implementation_prohibitions` (forbidden patterns/APIs).
+3. `decision_question`, `selected_option`, and `tradeoff_summary` (selected option and rationale from architect analysis).
+
+If `needs_architect: true` and `design_guidance` is absent, stop immediately and emit blocker JSON.
+If `needs_architect: false` and `design_guidance` is absent, continue normal implementation flow without architect guidance.
+If guidance content is ambiguous, contradictory, or cannot be satisfied without reinterpretation, stop and emit blocker JSON.
 
 ## 2. Constraints handling
 
@@ -153,7 +182,13 @@ When required judgment or hard constraint conflict occurs, output one JSON objec
 - `role`: `"implementer"`
 - `status`: `"needs_architect"`
 - `needs_architect`: `true`
-- `reason`: factual and concrete; no speculation, no blame, no routing directives
+- `reason`: factual and concrete; no speculation, no blame, no routing directives.
+  State the exact design decision needed (what must be decided, where, and why implementation cannot continue safely).
+
+Emit `status: "needs_architect"` when any of the following applies:
+1. `design_guidance` is absent but completion requires changing a public API, DB schema, or external contract.
+2. `dependency_contract` has a provider-consumer contradiction that blocks a compliant implementation.
+3. `implementation_prohibitions` conflicts with required behavior, so both cannot be satisfied simultaneously.
 
 ### 7.2 Output discipline
 - emit one blocker JSON object only,

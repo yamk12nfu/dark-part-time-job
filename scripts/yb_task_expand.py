@@ -705,7 +705,7 @@ def _build_design_guidance(design_output: Dict[str, Any]) -> Dict[str, Any]:
         "implementation_prohibitions": implementation_prohibitions,
         "tradeoff_summary": _build_tradeoff_summary(design_output),
         "tradeoff_table": tradeoff_table,
-        "implementer_readiness_confirmed": bool(design_output.get("implementer_readiness_confirmed")),
+        "implementer_readiness_confirmed": design_output.get("implementer_readiness_confirmed") is True,
     }
 
 

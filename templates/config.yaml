@@ -42,6 +42,39 @@ agents:
     cli: claude
   plan_review:
     cli: codex
-  # review:              # 未設定時は worker と同じ CLI を使用
-  #   cli: claude        # 実装と別の CLI でクロスレビュー
-  #   model: sonnet      # レビュー用に別モデルを指定可能
+  reviewer:
+    cli: codex
+    # レビュー専用。implementerと異なるCLI/モデルでクロスレビュー可能
+    # model: o3          # optional: レビュー用に別モデルを指定可能
+  quality_gate:
+    cli: claude
+    # 品質判定専用。approve/rework判定のみ
+    # model: sonnet      # optional: 品質判定用に別モデルを指定可能
+
+v2_roles:
+  planner:
+    pane: "0.1"
+    cli: claude          # planner は分割判断を担当するため claude を利用
+  architect:
+    pane: "1.0"
+    cli: codex           # architect は設計判断を担当するため codex を利用
+  reviewer:
+    pane: "1.1"
+    cli: codex           # reviewer はレビュー判断を担当するため codex を利用
+  quality_gate:
+    pane: "1.2"
+    cli: claude          # quality_gate は最終判定を担当するため claude を利用
+  implementer:
+    panes: ["2.0", "2.1", "2.2"]
+    cli: codex           # implementer は実装専任のため codex を利用
+
+contracts:
+  completion_signal_version: 1
+  require_status_assigned_on_task_create: true
+
+orchestrator:
+  enabled: true
+  mode: hybrid          # legacy | hybrid | v2
+  poll_interval_sec: 5
+  max_signal_history: 2000
+  timestamp_guard: true

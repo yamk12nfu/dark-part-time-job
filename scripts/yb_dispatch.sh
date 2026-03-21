@@ -8,8 +8,12 @@ session_id=""
 planner_mode=0
 cmd_id=""
 dry_run=0
+role=""
+task_id=""
 planner_only_arg=""
 cmd_id_value_missing=0
+role_value_missing=0
+task_id_value_missing=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -43,6 +47,24 @@ while [[ $# -gt 0 ]]; do
       fi
       shift
       ;;
+    --role)
+      if [ $# -lt 2 ]; then
+        role_value_missing=1
+        shift
+      else
+        role="$2"
+        shift 2
+      fi
+      ;;
+    --task-id)
+      if [ $# -lt 2 ]; then
+        task_id_value_missing=1
+        shift
+      else
+        task_id="$2"
+        shift 2
+      fi
+      ;;
     *)
       echo "Unknown arg: $1" >&2
       exit 1
@@ -55,8 +77,43 @@ if [ "$planner_mode" -ne 1 ] && [ -n "$planner_only_arg" ]; then
   exit 1
 fi
 
+if [ "$role_value_missing" -eq 1 ]; then
+  echo "Missing value for --role" >&2
+  exit 1
+fi
+
+if [ "$task_id_value_missing" -eq 1 ]; then
+  echo "Missing value for --task-id" >&2
+  exit 1
+fi
+
 if [ "$planner_mode" -eq 1 ] && [ "$cmd_id_value_missing" -eq 1 ]; then
   echo "Missing value for --cmd-id" >&2
+  exit 1
+fi
+
+if [ "$planner_mode" -eq 1 ] && [ -n "$role" ]; then
+  echo "Unknown arg: --role" >&2
+  exit 1
+fi
+
+if [ "$planner_mode" -eq 1 ] && [ -n "$task_id" ]; then
+  echo "Unknown arg: --task-id" >&2
+  exit 1
+fi
+
+if [ -n "$role" ] && [ "$role" != "reviewer" ] && [ "$role" != "quality-gate" ]; then
+  echo "Invalid --role: $role (expected reviewer|quality-gate)" >&2
+  exit 1
+fi
+
+if [ -n "$role" ] && [ -z "$task_id" ]; then
+  echo "Missing --task-id" >&2
+  exit 1
+fi
+
+if [ -z "$role" ] && [ -n "$task_id" ]; then
+  echo "--task-id requires --role" >&2
   exit 1
 fi
 
@@ -143,13 +200,1078 @@ if [ ! -f "$panes_file" ]; then
   exit 1
 fi
 
-REPO_ROOT="$repo_root" PANES_FILE="$panes_file" ORCH_ROOT="$ORCH_ROOT" SESSION_ID="$session_id" python3 - <<'PY'
-import json, os, subprocess, sys
+REPO_ROOT="$repo_root" PANES_FILE="$panes_file" ORCH_ROOT="$ORCH_ROOT" SESSION_ID="$session_id" DISPATCH_ROLE="$role" DISPATCH_TASK_ID="$task_id" python3 - <<'PY'
+import datetime
+import glob
+import json
+import os
+import subprocess
+import sys
+
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    sys.exit(code)
+
+
+def leading_spaces(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def strip_inline_comment(value):
+    in_single = False
+    in_double = False
+    escaped = False
+    result = []
+    for ch in value:
+        if ch == "\\" and in_double and not escaped:
+            escaped = True
+            result.append(ch)
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single and not escaped:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double:
+            break
+        escaped = False
+        result.append(ch)
+    return "".join(result).rstrip()
+
+
+def parse_scalar(raw_value):
+    stripped = strip_inline_comment(raw_value).strip()
+    if not stripped:
+        return ""
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'"}:
+        stripped = stripped[1:-1]
+    lowered = stripped.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if lowered in ("null", "~"):
+        return None
+    return stripped
+
+
+def parse_yaml_mapping(content):
+    data = {}
+    stack = [(-1, data)]
+
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = leading_spaces(raw_line)
+        line = raw_line[indent:]
+        if line.startswith("- ") or ":" not in line:
+            continue
+
+        key_part, raw_value = line.split(":", 1)
+        key = key_part.strip()
+        if not key:
+            continue
+
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+
+        value = strip_inline_comment(raw_value).strip()
+        if value == "":
+            child = {}
+            parent[key] = child
+            stack.append((indent, child))
+            continue
+        if value.startswith("|") or value.startswith(">"):
+            parent[key] = ""
+            continue
+        parent[key] = parse_scalar(raw_value)
+
+    return data
+
+
+def to_text(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if text.lower() in ("null", "~"):
+        return ""
+    return text
+
+
+def to_int(value, default=0):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def to_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return default
+
+
+def read_text(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def write_text(path, content):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def extract_literal_block(content, key, key_indent):
+    lines = content.splitlines()
+    prefix = " " * key_indent + f"{key}:"
+    for idx, line in enumerate(lines):
+        if not line.startswith(prefix):
+            continue
+        suffix = line[len(prefix) :].strip()
+        if not suffix.startswith("|"):
+            continue
+        block = []
+        for next_line in lines[idx + 1 :]:
+            if next_line.strip() == "":
+                block.append("")
+                continue
+            indent = leading_spaces(next_line)
+            if indent <= key_indent:
+                break
+            trim = key_indent + 2
+            block.append(next_line[trim:] if len(next_line) >= trim else "")
+        return "\n".join(block).rstrip()
+    return ""
+
+
+def extract_list_values(content, key, key_indent):
+    lines = content.splitlines()
+    prefix = " " * key_indent + f"{key}:"
+    for idx, line in enumerate(lines):
+        if not line.startswith(prefix):
+            continue
+        suffix = line[len(prefix) :].strip()
+        if suffix.startswith("[") and suffix.endswith("]"):
+            inner = suffix[1:-1].strip()
+            if not inner:
+                return []
+            values = []
+            for part in inner.split(","):
+                item = to_text(parse_scalar(part))
+                if item:
+                    values.append(item)
+            return values
+
+        values = []
+        for next_line in lines[idx + 1 :]:
+            if next_line.strip() == "":
+                continue
+            indent = leading_spaces(next_line)
+            if indent <= key_indent:
+                break
+            stripped = next_line.strip()
+            if not stripped.startswith("- "):
+                continue
+            item = to_text(parse_scalar(stripped[2:]))
+            if item:
+                values.append(item)
+        return values
+    return []
+
+
+def extract_section_block(content, key, key_indent):
+    lines = content.splitlines()
+    prefix = " " * key_indent + f"{key}:"
+    for idx, line in enumerate(lines):
+        if not line.startswith(prefix):
+            continue
+        section_lines = [line]
+        for next_line in lines[idx + 1 :]:
+            if next_line.strip() == "":
+                section_lines.append(next_line)
+                continue
+            indent = leading_spaces(next_line)
+            if indent <= key_indent:
+                break
+            section_lines.append(next_line)
+        return "\n".join(section_lines).strip()
+    return ""
+
+
+def yaml_quote(value):
+    text = to_text(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def yaml_scalar(value):
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return yaml_quote(value)
+
+
+def emit_yaml_list(lines, indent, key, values):
+    prefix = " " * indent
+    if values:
+        lines.append(f"{prefix}{key}:")
+        for item in values:
+            lines.append(f"{prefix}  - {yaml_quote(item)}")
+    else:
+        lines.append(f"{prefix}{key}: []")
+
+
+def emit_yaml_block(lines, indent, key, text):
+    prefix = " " * indent
+    lines.append(f"{prefix}{key}: |")
+    if text:
+        for row in text.splitlines():
+            lines.append(f"{prefix}  {row}")
+    else:
+        lines.append(f"{prefix}  ")
+
+
+def truncate_text(text, max_lines=120, max_chars=8000):
+    rows = text.splitlines()
+    clipped = False
+    if len(rows) > max_lines:
+        rows = rows[:max_lines]
+        clipped = True
+    result = "\n".join(rows)
+    if len(result) > max_chars:
+        result = result[:max_chars]
+        clipped = True
+    if clipped:
+        result += "\n... (truncated)"
+    return result
+
+
+def run_git_capture(args):
+    try:
+        proc = subprocess.run(["git", "-C", work_dir] + args, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        return f"(failed to run git {' '.join(args)}: {exc})"
+    output = proc.stdout.strip()
+    error_text = proc.stderr.strip()
+    if proc.returncode != 0 and not output:
+        return f"(git {' '.join(args)} failed: {error_text or f'rc={proc.returncode}'})"
+    return output or "(no changes)"
+
+
+def send_two_step(session_name, pane_id, command):
+    target = f"{session_name}:{pane_id}"
+    for step, payload in (("command", command), ("enter", "Enter")):
+        proc = subprocess.run(
+            ["tmux", "send-keys", "-t", target, payload],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = to_text(proc.stderr) or to_text(proc.stdout) or f"rc={proc.returncode}"
+            fail(
+                f"tmux send-keys failed: target={target} step={step} rc={proc.returncode} detail={detail}",
+                code=1,
+            )
+
+
+def build_worker_command(worker_id):
+    cmd = f'cd "{work_dir}" && "{orch_root}/scripts/yb_run_worker.sh" --repo "{repo_root}" --worker "{worker_id}"'
+    if session_id:
+        cmd += f' --session "{session_id}"'
+    return cmd
+
+
+def get_role_entry(v2_roles, role_key):
+    if not isinstance(v2_roles, dict):
+        return {}
+    candidates = [role_key, role_key.replace("-", "_"), role_key.replace("_", "-")]
+    for candidate in candidates:
+        entry = v2_roles.get(candidate)
+        if isinstance(entry, dict):
+            return entry
+    return {}
+
+
+def resolve_role_pane(role_key, fallback_worker_id):
+    pane = ""
+    entry = get_role_entry(panes_data.get("v2_roles"), role_key)
+    if entry:
+        pane = to_text(entry.get("pane"))
+    if not pane:
+        entry = get_role_entry(config_data.get("v2_roles"), role_key)
+        if entry:
+            pane = to_text(entry.get("pane"))
+    if pane:
+        return pane
+    if fallback_worker_id:
+        return to_text(workers.get(fallback_worker_id))
+    return ""
+
+
+def read_task_record(task_path):
+    content = read_text(task_path)
+    parsed = parse_yaml_mapping(content)
+    task_node = parsed.get("task")
+    if not isinstance(task_node, dict):
+        task_node = {}
+    return {"path": task_path, "content": content, "task": task_node}
+
+
+def find_task_record_by_id(tasks_dir, target_task_id):
+    for task_path in sorted(glob.glob(os.path.join(tasks_dir, "*.yaml"))):
+        try:
+            record = read_task_record(task_path)
+        except OSError:
+            continue
+        if to_text(record["task"].get("task_id")) == target_task_id:
+            return record
+    return None
+
+
+def normalize_string_list(raw_values):
+    if not isinstance(raw_values, list):
+        return []
+    values = []
+    for raw in raw_values:
+        text = to_text(raw)
+        if text:
+            values.append(text)
+    return values
+
+
+def parse_inline_yaml_list(raw_value):
+    stripped = strip_inline_comment(raw_value).strip()
+    if not (stripped.startswith("[") and stripped.endswith("]")):
+        return None
+    inner = stripped[1:-1].strip()
+    if not inner:
+        return []
+    values = []
+    for part in inner.split(","):
+        item = to_text(parse_scalar(part))
+        if item:
+            values.append(item)
+    return values
+
+
+def resolve_worker_id_by_pane(pane_id):
+    target = to_text(pane_id)
+    if not target:
+        return ""
+    for worker_id, pane in workers.items():
+        if to_text(pane) == target:
+            return worker_id
+    return ""
+
+
+def derive_parent_cmd_id_from_task_id(task_id):
+    marker = "_task_"
+    idx = task_id.find(marker)
+    if idx <= 0:
+        return ""
+    return task_id[:idx]
+
+
+def read_report_record(report_path):
+    content = read_text(report_path)
+    parsed = parse_yaml_mapping(content)
+    report_node = parsed.get("report")
+    if not isinstance(report_node, dict):
+        report_node = {}
+    worker_id = to_text(report_node.get("worker_id"))
+    if not worker_id:
+        basename = os.path.basename(report_path)
+        worker_id = basename.replace("_report.yaml", "")
+    return {
+        "path": report_path,
+        "content": content,
+        "report": report_node,
+        "worker_id": worker_id,
+        "task_id": to_text(report_node.get("task_id")),
+        "review_target_task_id": to_text(report_node.get("review_target_task_id")),
+        "parent_cmd_id": to_text(report_node.get("parent_cmd_id")),
+        "phase": to_text(report_node.get("phase")),
+    }
+
+
+def collect_report_hints_for_task(reports_dir, source_task_id):
+    hints = {
+        "reports_dir": reports_dir,
+        "implement_report": None,
+        "review_reports": [],
+        "implementer_worker_id": "",
+        "reviewer_worker_id": "",
+        "parent_cmd_id": "",
+        "persona": "",
+        "loop_count": 0,
+        "gate_id": "",
+        "enabled_snapshot": None,
+        "deliverables": [],
+    }
+    if not os.path.isdir(reports_dir):
+        return hints
+
+    for report_path in sorted(glob.glob(os.path.join(reports_dir, "*_report.yaml"))):
+        if not os.path.isfile(report_path):
+            continue
+        try:
+            record = read_report_record(report_path)
+        except OSError:
+            continue
+
+        if record["task_id"] == source_task_id:
+            if hints["implement_report"] is None:
+                hints["implement_report"] = record
+            else:
+                current_phase = to_text(hints["implement_report"]["phase"]).lower()
+                phase = to_text(record["phase"]).lower()
+                if current_phase == "review" and phase != "review":
+                    hints["implement_report"] = record
+
+        if record["review_target_task_id"] == source_task_id:
+            hints["review_reports"].append(record)
+
+    implement_report = hints["implement_report"]
+    if implement_report is not None:
+        report_data = implement_report["report"]
+        hints["implementer_worker_id"] = to_text(implement_report.get("worker_id"))
+        hints["parent_cmd_id"] = to_text(report_data.get("parent_cmd_id"))
+        hints["persona"] = to_text(report_data.get("persona"))
+        hints["loop_count"] = to_int(report_data.get("loop_count"), 0)
+        hints["gate_id"] = to_text(report_data.get("gate_id"))
+        enabled_snapshot = report_data.get("enabled_snapshot")
+        if enabled_snapshot is not None:
+            hints["enabled_snapshot"] = to_bool(enabled_snapshot, True)
+        hints["deliverables"] = extract_list_values(implement_report["content"], "files_changed", 2)
+
+    if hints["review_reports"]:
+        hints["reviewer_worker_id"] = to_text(hints["review_reports"][0].get("worker_id"))
+        if not hints["parent_cmd_id"]:
+            hints["parent_cmd_id"] = to_text(hints["review_reports"][0].get("parent_cmd_id"))
+        if not hints["gate_id"]:
+            hints["gate_id"] = to_text(hints["review_reports"][0]["report"].get("gate_id"))
+
+    if not hints["parent_cmd_id"]:
+        hints["parent_cmd_id"] = derive_parent_cmd_id_from_task_id(source_task_id)
+
+    return hints
+
+
+def parse_plan_task_entries(plan_content):
+    entries = []
+    in_tasks = False
+    current = None
+    current_list_key = ""
+
+    for raw_line in plan_content.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = leading_spaces(raw_line)
+        if indent == 0 and stripped == "tasks:":
+            in_tasks = True
+            current = None
+            current_list_key = ""
+            continue
+        if not in_tasks:
+            continue
+        if indent == 0 and stripped != "tasks:":
+            break
+
+        if indent == 2 and stripped.startswith("- "):
+            if current is not None:
+                entries.append(current)
+            current = {}
+            current_list_key = ""
+            remainder = stripped[2:]
+            if ":" in remainder:
+                key, raw_value = remainder.split(":", 1)
+                key = key.strip()
+                inline_values = parse_inline_yaml_list(raw_value)
+                if inline_values is not None:
+                    current[key] = inline_values
+                else:
+                    value = strip_inline_comment(raw_value).strip()
+                    if value == "":
+                        current[key] = []
+                        current_list_key = key
+                    else:
+                        current[key] = parse_scalar(raw_value)
+            continue
+
+        if current is None:
+            continue
+
+        if indent >= 4 and stripped.startswith("- "):
+            item = to_text(parse_scalar(stripped[2:]))
+            if item and current_list_key:
+                existing = current.get(current_list_key)
+                if not isinstance(existing, list):
+                    existing = []
+                existing.append(item)
+                current[current_list_key] = existing
+            continue
+
+        if indent >= 4 and ":" in stripped and not stripped.startswith("- "):
+            key, raw_value = stripped.split(":", 1)
+            key = key.strip()
+            inline_values = parse_inline_yaml_list(raw_value)
+            if inline_values is not None:
+                current[key] = inline_values
+                current_list_key = ""
+                continue
+            value = strip_inline_comment(raw_value).strip()
+            if value == "":
+                current[key] = []
+                current_list_key = key
+            else:
+                current[key] = parse_scalar(raw_value)
+                current_list_key = ""
+
+    if current is not None:
+        entries.append(current)
+
+    return entries
+
+
+def build_source_task_from_plan(source_task_id, plan_entry, parent_cmd_id, report_hints):
+    quality_gate_cfg = config_data.get("quality_gate")
+    if not isinstance(quality_gate_cfg, dict):
+        quality_gate_cfg = {}
+    codex_cfg = config_data.get("codex")
+    if not isinstance(codex_cfg, dict):
+        codex_cfg = {}
+
+    local_id = to_text(plan_entry.get("id"))
+    implementer_worker_id = to_text(plan_entry.get("owner")) or to_text(report_hints.get("implementer_worker_id"))
+    reviewer_worker_id = to_text(report_hints.get("reviewer_worker_id"))
+    deliverables = normalize_string_list(plan_entry.get("deliverables"))
+    definition_of_done = normalize_string_list(plan_entry.get("definition_of_done"))
+    requirement_ids = normalize_string_list(plan_entry.get("requirement_ids"))
+
+    description_lines = [
+        "## Reconstructed Source Task (plan fallback)",
+        f"- source_task_id: {source_task_id}",
+        f"- plan_task_id: {local_id or '(unknown)'}",
+    ]
+    if requirement_ids:
+        description_lines.append("")
+        description_lines.append("### requirement_ids")
+        for req_id in requirement_ids:
+            description_lines.append(f"- {req_id}")
+    if deliverables:
+        description_lines.append("")
+        description_lines.append("### deliverables")
+        for path in deliverables:
+            description_lines.append(f"- {path}")
+    if definition_of_done:
+        description_lines.append("")
+        description_lines.append("### definition_of_done")
+        for item in definition_of_done:
+            description_lines.append(f"- {item}")
+
+    enabled_snapshot = report_hints.get("enabled_snapshot")
+    if enabled_snapshot is None:
+        enabled_snapshot = True
+
+    source_task = {
+        "task_id": source_task_id,
+        "parent_cmd_id": parent_cmd_id,
+        "assigned_to": implementer_worker_id,
+        "title": f"{source_task_id} (plan fallback)",
+        "description": "\n".join(description_lines),
+        "repo_root": ".",
+        "persona": to_text(report_hints.get("persona")) or "senior_software_engineer",
+        "phase": "implement",
+        "loop_count": to_int(report_hints.get("loop_count"), 0),
+        "quality_gate": {
+            "enabled_snapshot": bool(enabled_snapshot),
+            "gate_id": to_text(report_hints.get("gate_id")) or source_task_id,
+            "implementer_worker_id": implementer_worker_id,
+            "reviewer_worker_id": reviewer_worker_id or None,
+            "source_task_id": source_task_id,
+            "max_loop_count": to_int(quality_gate_cfg.get("max_rework_loops"), 3),
+            "checklist_template": to_text(quality_gate_cfg.get("checklist_template_path"))
+            or ".yamibaito/templates/review-checklist.yaml",
+            "review_checklist": [],
+        },
+        "constraints": {
+            "allowed_paths": list(deliverables),
+            "forbidden_paths": [],
+            "deliverables": list(deliverables),
+            "shared_files_policy": "warn",
+            "tests_policy": "none",
+        },
+        "codex": {
+            "mode": to_text(codex_cfg.get("mode")) or "exec_stdin",
+            "sandbox": to_text(codex_cfg.get("sandbox")) or "workspace-write",
+            "approval": to_text(codex_cfg.get("approval")) or "on-request",
+            "model": to_text(codex_cfg.get("model")) or "high",
+            "web_search": to_bool(codex_cfg.get("web_search"), False),
+        },
+    }
+    return source_task
+
+
+def find_source_record_from_plan(queue_dir, source_task_id, report_hints):
+    plan_root = os.path.join(queue_dir, "plan")
+    if not os.path.isdir(plan_root):
+        return None
+
+    candidate_cmd_ids = []
+    hint_cmd_id = to_text(report_hints.get("parent_cmd_id"))
+    if hint_cmd_id:
+        candidate_cmd_ids.append(hint_cmd_id)
+    derived_cmd_id = derive_parent_cmd_id_from_task_id(source_task_id)
+    if derived_cmd_id and derived_cmd_id not in candidate_cmd_ids:
+        candidate_cmd_ids.append(derived_cmd_id)
+
+    candidate_paths = []
+    for cmd_id in candidate_cmd_ids:
+        candidate_paths.append(os.path.join(plan_root, cmd_id, "tasks.yaml"))
+    candidate_paths.extend(sorted(glob.glob(os.path.join(plan_root, "*", "tasks.yaml"))))
+
+    seen = set()
+    for plan_path in candidate_paths:
+        if plan_path in seen:
+            continue
+        seen.add(plan_path)
+        if not os.path.isfile(plan_path):
+            continue
+
+        parent_cmd_id = os.path.basename(os.path.dirname(plan_path))
+        try:
+            plan_content = read_text(plan_path)
+        except OSError:
+            continue
+        for entry in parse_plan_task_entries(plan_content):
+            local_id = to_text(entry.get("id"))
+            if not local_id:
+                continue
+            expanded_id = local_id
+            if parent_cmd_id and not local_id.startswith(f"{parent_cmd_id}_"):
+                expanded_id = f"{parent_cmd_id}_{local_id}"
+            if source_task_id not in (local_id, expanded_id):
+                continue
+            source_task = build_source_task_from_plan(
+                source_task_id=source_task_id,
+                plan_entry=entry,
+                parent_cmd_id=parent_cmd_id,
+                report_hints=report_hints,
+            )
+            return {"path": plan_path, "content": plan_content, "task": source_task, "origin": "plan"}
+    return None
+
+
+def build_source_record_from_reports(source_task_id, report_hints):
+    implement_report = report_hints.get("implement_report")
+    review_reports = report_hints.get("review_reports")
+    if implement_report is None and not review_reports:
+        return None
+
+    quality_gate_cfg = config_data.get("quality_gate")
+    if not isinstance(quality_gate_cfg, dict):
+        quality_gate_cfg = {}
+    codex_cfg = config_data.get("codex")
+    if not isinstance(codex_cfg, dict):
+        codex_cfg = {}
+
+    implementer_worker_id = to_text(report_hints.get("implementer_worker_id"))
+    reviewer_worker_id = to_text(report_hints.get("reviewer_worker_id"))
+    parent_cmd_id = to_text(report_hints.get("parent_cmd_id")) or derive_parent_cmd_id_from_task_id(source_task_id)
+    deliverables = normalize_string_list(report_hints.get("deliverables"))
+
+    source_path = ""
+    if implement_report is not None:
+        source_path = to_text(implement_report.get("path"))
+    elif review_reports:
+        source_path = to_text(review_reports[0].get("path"))
+
+    summary = ""
+    notes = ""
+    if implement_report is not None:
+        report_node = implement_report.get("report")
+        if isinstance(report_node, dict):
+            summary = to_text(report_node.get("summary"))
+            notes = to_text(report_node.get("notes"))
+
+    description_lines = [
+        "## Reconstructed Source Task (report fallback)",
+        f"- source_task_id: {source_task_id}",
+        f"- source_report: {source_path or '(unknown)'}",
+    ]
+    if summary:
+        description_lines.append("")
+        description_lines.append("### implementer_summary")
+        description_lines.append(summary)
+    if notes:
+        description_lines.append("")
+        description_lines.append("### implementer_notes")
+        description_lines.append(notes)
+    if deliverables:
+        description_lines.append("")
+        description_lines.append("### deliverables (from report.files_changed)")
+        for path in deliverables:
+            description_lines.append(f"- {path}")
+
+    enabled_snapshot = report_hints.get("enabled_snapshot")
+    if enabled_snapshot is None:
+        enabled_snapshot = True
+
+    source_task = {
+        "task_id": source_task_id,
+        "parent_cmd_id": parent_cmd_id,
+        "assigned_to": implementer_worker_id,
+        "title": f"{source_task_id} (report fallback)",
+        "description": "\n".join(description_lines),
+        "repo_root": ".",
+        "persona": to_text(report_hints.get("persona")) or "senior_software_engineer",
+        "phase": "implement",
+        "loop_count": to_int(report_hints.get("loop_count"), 0),
+        "quality_gate": {
+            "enabled_snapshot": bool(enabled_snapshot),
+            "gate_id": to_text(report_hints.get("gate_id")) or source_task_id,
+            "implementer_worker_id": implementer_worker_id or None,
+            "reviewer_worker_id": reviewer_worker_id or None,
+            "source_task_id": source_task_id,
+            "max_loop_count": to_int(quality_gate_cfg.get("max_rework_loops"), 3),
+            "checklist_template": to_text(quality_gate_cfg.get("checklist_template_path"))
+            or ".yamibaito/templates/review-checklist.yaml",
+            "review_checklist": [],
+        },
+        "constraints": {
+            "allowed_paths": list(deliverables),
+            "forbidden_paths": [],
+            "deliverables": list(deliverables),
+            "shared_files_policy": "warn",
+            "tests_policy": "none",
+        },
+        "codex": {
+            "mode": to_text(codex_cfg.get("mode")) or "exec_stdin",
+            "sandbox": to_text(codex_cfg.get("sandbox")) or "workspace-write",
+            "approval": to_text(codex_cfg.get("approval")) or "on-request",
+            "model": to_text(codex_cfg.get("model")) or "high",
+            "web_search": to_bool(codex_cfg.get("web_search"), False),
+        },
+    }
+    return {"path": source_path, "content": "", "task": source_task, "origin": "reports"}
+
+
+def resolve_source_record(queue_dir, tasks_dir, source_task_id):
+    reports_dir = os.path.join(queue_dir, "reports")
+    report_hints = collect_report_hints_for_task(reports_dir, source_task_id)
+
+    source_record = find_task_record_by_id(tasks_dir, source_task_id)
+    if source_record is not None:
+        source_record["origin"] = "tasks"
+        source_record["report_hints"] = report_hints
+        return source_record
+
+    plan_record = find_source_record_from_plan(queue_dir, source_task_id, report_hints)
+    if plan_record is not None:
+        plan_record["report_hints"] = report_hints
+        return plan_record
+
+    report_record = build_source_record_from_reports(source_task_id, report_hints)
+    if report_record is not None:
+        report_record["report_hints"] = report_hints
+        return report_record
+
+    return None
+
+
+def resolve_checklist_path(source_qg):
+    checklist_rel = to_text(source_qg.get("checklist_template")) or ".yamibaito/templates/review-checklist.yaml"
+    candidates = [
+        os.path.join(repo_root, checklist_rel),
+        os.path.join(work_dir, checklist_rel),
+        os.path.join(repo_root, ".yamibaito", "templates", "review-checklist.yaml"),
+        os.path.join(repo_root, "templates", "review-checklist.yaml"),
+    ]
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    return candidates[-1]
+
+
+REVIEW_CHECKLIST_ITEM_IDS = [
+    "security_alignment",
+    "error_retry_timeout",
+    "observability",
+    "test_strategy",
+    "acceptance_criteria_fit",
+    "requirement_coverage",
+]
+
+
+def build_role_prompt(role_name, report_path):
+    role_header = "reviewer" if role_name == "reviewer" else "quality-gate"
+    checklist_items = ", ".join(REVIEW_CHECKLIST_ITEM_IDS)
+    lines = [
+        f"あなたは {role_header} としてこのYAMLのタスクを実行する。",
+        "まず task.description の入力データを読み、レビュー契約に沿って判断結果を構造化して返すこと。",
+        "",
+        "ルール:",
+        "- 指示されていない範囲の実装変更はしない。",
+        "- review_result は必ず \"approve\" または \"rework\" を設定すること。",
+        f"- review_checklist は 6観点（{checklist_items}）の各 item_id に result (ok/ng) と comment を記載すること。",
+        "- review_result が \"rework\" の場合は rework_instructions に具体的な修正指示を記載すること。",
+        "- report YAML の更新は constraints の制約対象外。作業完了時に必ず更新すること。",
+        "",
+        "作業が終わったら以下の report YAML を更新すること:",
+        f"- {report_path}",
+        "summary は1行で簡潔に書くこと。",
+    ]
+    return "\n".join(lines)
+
+
+def render_role_task_yaml(
+    source_task,
+    source_content,
+    role_name,
+    target_worker_id,
+    source_task_id,
+    description_text,
+    persona,
+    implementer_worker_id,
+    reviewer_worker_id,
+):
+    source_qg = source_task.get("quality_gate")
+    if not isinstance(source_qg, dict):
+        source_qg = {}
+    source_constraints = source_task.get("constraints")
+    if not isinstance(source_constraints, dict):
+        source_constraints = {}
+    source_codex = source_task.get("codex")
+    if not isinstance(source_codex, dict):
+        source_codex = {}
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
+    title_prefix = "[Reviewer]" if role_name == "reviewer" else "[Quality Gate]"
+    source_title = to_text(source_task.get("title")) or source_task_id
+
+    allowed_paths = extract_list_values(source_content, "allowed_paths", 4)
+    if not allowed_paths:
+        allowed_paths = normalize_string_list(source_constraints.get("allowed_paths"))
+    forbidden_paths = extract_list_values(source_content, "forbidden_paths", 4)
+    if not forbidden_paths:
+        forbidden_paths = normalize_string_list(source_constraints.get("forbidden_paths"))
+    deliverables = extract_list_values(source_content, "deliverables", 4)
+    if not deliverables:
+        deliverables = normalize_string_list(source_constraints.get("deliverables"))
+
+    loop_count = to_int(source_task.get("loop_count"), 0)
+    max_loop_count = to_int(source_qg.get("max_loop_count"), 3)
+
+    report_path = os.path.join(queue_dir, "reports", f"{target_worker_id}_report.yaml")
+    prompt_text = build_role_prompt(role_name, report_path)
+
+    lines = []
+    lines.append("schema_version: 1")
+    lines.append("task:")
+    lines.append(f"  task_id: {yaml_quote(source_task_id)}")
+    lines.append(f"  parent_cmd_id: {yaml_quote(to_text(source_task.get('parent_cmd_id')))}")
+    lines.append(f"  assigned_to: {yaml_quote(target_worker_id)}")
+    lines.append(f"  assigned_at: {yaml_quote(now_iso)}")
+    lines.append("  status: assigned")
+    lines.append("")
+    lines.append(f"  title: {yaml_quote(f'{title_prefix} {source_title}')}")
+    emit_yaml_block(lines, 2, "description", description_text)
+    lines.append("")
+    lines.append(f"  repo_root: {yaml_quote(to_text(source_task.get('repo_root')) or '.')}")
+    lines.append(f"  persona: {yaml_quote(persona)}")
+    lines.append("  phase: review")
+    lines.append(f"  loop_count: {loop_count}")
+    lines.append("")
+    lines.append("  quality_gate:")
+    lines.append(f"    enabled_snapshot: {yaml_scalar(to_bool(source_qg.get('enabled_snapshot'), True))}")
+    lines.append(f"    gate_id: {yaml_scalar(to_text(source_qg.get('gate_id')) or None)}")
+    lines.append(f"    implementer_worker_id: {yaml_scalar(implementer_worker_id or None)}")
+    lines.append(f"    reviewer_worker_id: {yaml_scalar(reviewer_worker_id or None)}")
+    lines.append(f"    source_task_id: {yaml_quote(source_task_id)}")
+    lines.append(f"    max_loop_count: {max_loop_count}")
+    lines.append(
+        f"    checklist_template: {yaml_quote(to_text(source_qg.get('checklist_template')) or '.yamibaito/templates/review-checklist.yaml')}"
+    )
+    lines.append("    review_checklist: []")
+    lines.append("")
+    lines.append("  constraints:")
+    emit_yaml_list(lines, 4, "allowed_paths", allowed_paths)
+    emit_yaml_list(lines, 4, "forbidden_paths", forbidden_paths)
+    emit_yaml_list(lines, 4, "deliverables", deliverables)
+    lines.append(
+        f"    shared_files_policy: {yaml_quote(to_text(source_constraints.get('shared_files_policy')) or 'warn')}"
+    )
+    lines.append(f"    tests_policy: {yaml_quote(to_text(source_constraints.get('tests_policy')) or 'none')}")
+    lines.append("")
+    lines.append("  codex:")
+    lines.append(f"    mode: {yaml_quote(to_text(source_codex.get('mode')) or 'exec_stdin')}")
+    lines.append(f"    sandbox: {yaml_quote(to_text(source_codex.get('sandbox')) or 'workspace-write')}")
+    lines.append(f"    approval: {yaml_quote(to_text(source_codex.get('approval')) or 'on-request')}")
+    lines.append(f"    model: {yaml_quote(to_text(source_codex.get('model')) or 'high')}")
+    lines.append(f"    web_search: {'true' if to_bool(source_codex.get('web_search'), False) else 'false'}")
+    lines.append("")
+    emit_yaml_block(lines, 2, "prompt", prompt_text)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def resolve_source_description(source_content, source_task):
+    description = extract_literal_block(source_content, "description", 2)
+    if description:
+        return description
+    return to_text(source_task.get("description")) or "(description not found)"
+
+
+def resolve_reviewer_worker_id(source_task, source_qg, report_hints):
+    reviewer_worker_id = to_text(source_qg.get("reviewer_worker_id"))
+    if reviewer_worker_id:
+        return reviewer_worker_id
+
+    reviewer_worker_id = to_text(report_hints.get("reviewer_worker_id"))
+    if reviewer_worker_id:
+        return reviewer_worker_id
+
+    reviewer_pane = resolve_role_pane("reviewer", "")
+    if reviewer_pane:
+        reviewer_worker_id = resolve_worker_id_by_pane(reviewer_pane)
+        if reviewer_worker_id:
+            return reviewer_worker_id
+
+    implementer_worker_id = (
+        to_text(source_qg.get("implementer_worker_id"))
+        or to_text(source_task.get("assigned_to"))
+        or to_text(report_hints.get("implementer_worker_id"))
+    )
+
+    quality_gate_cfg = config_data.get("quality_gate")
+    if isinstance(quality_gate_cfg, dict):
+        for key in ("reviewer_worker_id", "default_reviewer_worker_id", "reviewer_worker"):
+            candidate = to_text(quality_gate_cfg.get(key))
+            if candidate and candidate in workers:
+                return candidate
+
+    workers_cfg = config_data.get("workers")
+    if isinstance(workers_cfg, dict):
+        for key in ("reviewer_worker_id", "reviewer_worker", "reviewer"):
+            candidate = to_text(workers_cfg.get(key))
+            if candidate and candidate in workers:
+                return candidate
+
+    tasks_dir = os.path.join(queue_dir, "tasks")
+    available = []
+    idle = []
+    for worker_id in workers.keys():
+        candidate = to_text(worker_id)
+        if not candidate:
+            continue
+        if implementer_worker_id and candidate == implementer_worker_id:
+            continue
+        available.append(candidate)
+        if not os.path.isdir(tasks_dir):
+            continue
+        _, status = read_task_status(os.path.join(tasks_dir, f"{candidate}.yaml"))
+        if status == "idle":
+            idle.append(candidate)
+
+    if idle:
+        return idle[0]
+    if available:
+        return available[0]
+    return ""
+
+
+def read_task_status(task_path):
+    if not os.path.exists(task_path):
+        return None, None
+    try:
+        record = read_task_record(task_path)
+    except OSError:
+        return None, None
+    task_node = record["task"]
+    return to_text(task_node.get("task_id")), to_text(task_node.get("status"))
+
+
+def resolve_quality_gate_worker(source_task):
+    source_qg = source_task.get("quality_gate")
+    if not isinstance(source_qg, dict):
+        source_qg = {}
+    for key in ("quality_gate_worker_id", "gate_worker_id", "dedicated_worker_id", "worker_id"):
+        candidate = to_text(source_qg.get(key))
+        if candidate:
+            return candidate
+    reviewer_candidate = to_text(source_qg.get("reviewer_worker_id"))
+    if reviewer_candidate:
+        return reviewer_candidate
+    assigned_to = to_text(source_task.get("assigned_to"))
+    implementer = to_text(source_qg.get("implementer_worker_id"))
+    if assigned_to and assigned_to != implementer:
+        return assigned_to
+    return ""
+
+
+def find_report_record_for_quality_gate(reports_dir, source_task_id, reviewer_worker_id):
+    if not os.path.isdir(reports_dir):
+        return None
+
+    candidate_paths = []
+    if reviewer_worker_id:
+        candidate_paths.append(os.path.join(reports_dir, f"{reviewer_worker_id}_report.yaml"))
+    candidate_paths.extend(sorted(glob.glob(os.path.join(reports_dir, "*_report.yaml"))))
+
+    seen = set()
+    for report_path in candidate_paths:
+        if report_path in seen:
+            continue
+        seen.add(report_path)
+        if not os.path.isfile(report_path):
+            continue
+        try:
+            content = read_text(report_path)
+        except OSError:
+            continue
+        parsed = parse_yaml_mapping(content)
+        report = parsed.get("report")
+        if not isinstance(report, dict):
+            report = {}
+        review_target = to_text(report.get("review_target_task_id"))
+        review_result = to_text(report.get("review_result"))
+        basename = os.path.basename(report_path)
+        reviewer_filename = f"{reviewer_worker_id}_report.yaml" if reviewer_worker_id else ""
+        if source_task_id and review_target != source_task_id:
+            continue
+        if not review_result:
+            continue
+        if reviewer_filename and basename == reviewer_filename:
+            return {"path": report_path, "content": content, "report": report}
+        if source_task_id and review_target == source_task_id:
+            return {"path": report_path, "content": content, "report": report}
+    return None
+
 
 repo_root = os.environ["REPO_ROOT"]
 panes_file = os.environ["PANES_FILE"]
 orch_root = os.environ["ORCH_ROOT"]
 session_id = os.environ.get("SESSION_ID", "")
+dispatch_role = to_text(os.environ.get("DISPATCH_ROLE", ""))
+dispatch_task_id = to_text(os.environ.get("DISPATCH_TASK_ID", ""))
 session_suffix = f"_{session_id}" if session_id else ""
 
 try:
@@ -164,41 +1286,231 @@ try:
     if not isinstance(workers, dict):
         raise TypeError("workers must be a JSON object")
 except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
-    print(f"Invalid panes map: {panes_file}: {e}", file=sys.stderr)
-    sys.exit(1)
+    fail(f"Invalid panes map: {panes_file}: {e}")
 
 work_dir = panes_data.get("work_dir", repo_root)
 if not isinstance(work_dir, str) or not work_dir or not os.path.isdir(work_dir):
     work_dir = repo_root
 
-# Build queue_dir from work_dir first, then fall back to repo_root for compatibility.
 queue_dir = os.path.join(work_dir, ".yamibaito", f"queue{session_suffix}")
 if not os.path.isdir(queue_dir):
     queue_dir = os.path.join(repo_root, ".yamibaito", f"queue{session_suffix}")
 
-def read_task_status(task_path):
-    if not os.path.exists(task_path):
-        return None, None
-    task_id = None
-    status = None
-    with open(task_path, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.strip().startswith("task_id:"):
-                task_id = line.split(":", 1)[1].strip().strip('"')
-            if line.strip().startswith("status:"):
-                status = line.split(":", 1)[1].strip().strip('"')
-    return task_id, status
+config_data = {}
+config_path = os.path.join(repo_root, ".yamibaito", "config.yaml")
+if os.path.isfile(config_path):
+    try:
+        config_data = parse_yaml_mapping(read_text(config_path))
+    except OSError:
+        config_data = {}
+
+if dispatch_role:
+    tasks_dir = os.path.join(queue_dir, "tasks")
+    if not os.path.isdir(tasks_dir):
+        fail(f"Missing tasks dir: {tasks_dir}")
+    source_record = resolve_source_record(queue_dir, tasks_dir, dispatch_task_id)
+    if source_record is None:
+        reports_dir = os.path.join(queue_dir, "reports")
+        plan_dir = os.path.join(queue_dir, "plan")
+        fail(
+            f"Missing task for --task-id {dispatch_task_id}: searched tasks={tasks_dir} plan={plan_dir} reports={reports_dir}"
+        )
+
+    source_task = source_record["task"]
+    source_content = source_record["content"]
+    source_origin = to_text(source_record.get("origin")) or "tasks"
+    report_hints = source_record.get("report_hints")
+    if not isinstance(report_hints, dict):
+        report_hints = {}
+    source_qg = source_task.get("quality_gate")
+    if not isinstance(source_qg, dict):
+        source_qg = {}
+    source_constraints = source_task.get("constraints")
+    if not isinstance(source_constraints, dict):
+        source_constraints = {}
+
+    implementer_worker_id = (
+        to_text(source_qg.get("implementer_worker_id"))
+        or to_text(source_task.get("assigned_to"))
+        or to_text(report_hints.get("implementer_worker_id"))
+    )
+    reviewer_worker_id = resolve_reviewer_worker_id(source_task, source_qg, report_hints)
+    source_description = resolve_source_description(source_content, source_task)
+
+    print(
+        f"dispatch_source: role={dispatch_role} task_id={dispatch_task_id} source={source_origin} path={to_text(source_record.get('path')) or '(unknown)'}",
+        file=sys.stderr,
+    )
+
+    if dispatch_role == "reviewer":
+        if not reviewer_worker_id:
+            fail(
+                "Missing reviewer worker: could not resolve from task.quality_gate.reviewer_worker_id, reports, or reviewer pane mapping"
+            )
+        if implementer_worker_id and implementer_worker_id == reviewer_worker_id:
+            fail(
+                f"CONFLICT: implementer ({implementer_worker_id}) == reviewer ({reviewer_worker_id}). Assign a different reviewer."
+            )
+
+        role_pane = resolve_role_pane("reviewer", reviewer_worker_id)
+        if not role_pane:
+            fail("Failed to resolve reviewer pane from v2_roles/workers")
+
+        pathspecs = extract_list_values(source_content, "deliverables", 4)
+        if not pathspecs:
+            pathspecs = normalize_string_list(source_constraints.get("deliverables"))
+        if not pathspecs:
+            pathspecs = extract_list_values(source_content, "allowed_paths", 4)
+        if not pathspecs:
+            pathspecs = normalize_string_list(source_constraints.get("allowed_paths"))
+
+        stat_args = ["diff", "--stat", "--no-color"]
+        name_args = ["diff", "--name-status", "--no-color"]
+        if pathspecs:
+            stat_args.extend(["--"] + pathspecs)
+            name_args.extend(["--"] + pathspecs)
+        diff_stat = truncate_text(run_git_capture(stat_args))
+        diff_names = truncate_text(run_git_capture(name_args))
+
+        checklist_path = resolve_checklist_path(source_qg)
+        if os.path.isfile(checklist_path):
+            checklist_text = truncate_text(read_text(checklist_path))
+        else:
+            checklist_text = f"(missing checklist: {checklist_path})"
+
+        reviewer_description = "\n".join(
+            [
+                "## Reviewer Dispatch Input",
+                f"- source_task_id: {dispatch_task_id}",
+                f"- implementer_worker_id: {implementer_worker_id or '(unknown)'}",
+                f"- reviewer_worker_id: {reviewer_worker_id}",
+                "",
+                "### Implementer Diff Summary (`git diff --stat`)",
+                diff_stat or "(no diff summary)",
+                "",
+                "### Implementer Diff Files (`git diff --name-status`)",
+                diff_names or "(no file changes)",
+                "",
+                "### Task Requirements",
+                source_description,
+                "",
+                f"### Review Checklist ({checklist_path})",
+                checklist_text,
+            ]
+        ).strip()
+
+        quality_gate_cfg = config_data.get("quality_gate")
+        if not isinstance(quality_gate_cfg, dict):
+            quality_gate_cfg = {}
+        reviewer_persona = to_text(quality_gate_cfg.get("reviewer_persona")) or to_text(source_task.get("persona"))
+        if not reviewer_persona:
+            reviewer_persona = "qa_engineer"
+
+        reviewer_task_yaml = render_role_task_yaml(
+            source_task=source_task,
+            source_content=source_content,
+            role_name="reviewer",
+            target_worker_id=reviewer_worker_id,
+            source_task_id=dispatch_task_id,
+            description_text=reviewer_description,
+            persona=reviewer_persona,
+            implementer_worker_id=implementer_worker_id,
+            reviewer_worker_id=reviewer_worker_id,
+        )
+        reviewer_task_path = os.path.join(tasks_dir, f"{reviewer_worker_id}.yaml")
+        write_text(reviewer_task_path, reviewer_task_yaml)
+        send_two_step(session, role_pane, build_worker_command(reviewer_worker_id))
+        print(
+            f"dispatch_log: role=reviewer task_id={dispatch_task_id} worker={reviewer_worker_id} pane={role_pane}",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    if dispatch_role == "quality-gate":
+        quality_gate_worker_id = resolve_quality_gate_worker(source_task)
+        if not quality_gate_worker_id:
+            quality_gate_worker_id = to_text(report_hints.get("reviewer_worker_id"))
+        if not quality_gate_worker_id:
+            quality_gate_pane = resolve_role_pane("quality_gate", "")
+            if quality_gate_pane:
+                quality_gate_worker_id = resolve_worker_id_by_pane(quality_gate_pane)
+        if not quality_gate_worker_id:
+            fail(
+                "Missing quality-gate worker in task YAML/reports. Set task.quality_gate.reviewer_worker_id or dedicated quality-gate worker id."
+            )
+
+        role_pane = resolve_role_pane("quality_gate", quality_gate_worker_id)
+        if not role_pane:
+            fail("Failed to resolve quality-gate pane from v2_roles/workers")
+
+        reports_dir = os.path.join(queue_dir, "reports")
+        report_record = find_report_record_for_quality_gate(reports_dir, dispatch_task_id, reviewer_worker_id)
+        if report_record is None:
+            fail(
+                f"Missing reviewer report for task_id={dispatch_task_id}: requires review_target_task_id match and non-null review_result ({reports_dir})"
+            )
+
+        report_data = report_record["report"]
+        report_content = report_record["content"]
+        recommendation = to_text(report_data.get("recommendation")) or to_text(report_data.get("review_result"))
+        if not recommendation:
+            fail(
+                f"Invalid reviewer report for task_id={dispatch_task_id}: recommendation/review_result is empty ({report_record['path']})"
+            )
+        findings_block = extract_section_block(report_content, "findings", 2)
+        if not findings_block:
+            findings_block = extract_section_block(report_content, "rework_instructions", 2)
+        if not findings_block:
+            summary = to_text(report_data.get("summary")) or "(no reviewer findings found)"
+            findings_block = f"findings:\n  - {summary}"
+
+        loop_count = to_int(source_task.get("loop_count"), 0)
+        gate_description = "\n".join(
+            [
+                "## Quality-Gate Dispatch Input",
+                f"- source_task_id: {dispatch_task_id}",
+                f"- reviewer_worker_id: {reviewer_worker_id or '(unknown)'}",
+                f"- quality_gate_worker_id: {quality_gate_worker_id}",
+                f"- loop_count: {loop_count}",
+                "",
+                "### Reviewer Recommendation",
+                recommendation,
+                "",
+                f"### Reviewer Findings (from {report_record['path']})",
+                findings_block,
+                "",
+                "### Task Requirements",
+                source_description,
+            ]
+        ).strip()
+
+        gate_persona = to_text(source_task.get("persona")) or "senior_software_engineer"
+        gate_task_yaml = render_role_task_yaml(
+            source_task=source_task,
+            source_content=source_content,
+            role_name="quality-gate",
+            target_worker_id=quality_gate_worker_id,
+            source_task_id=dispatch_task_id,
+            description_text=gate_description,
+            persona=gate_persona,
+            implementer_worker_id=implementer_worker_id,
+            reviewer_worker_id=reviewer_worker_id,
+        )
+        gate_task_path = os.path.join(tasks_dir, f"{quality_gate_worker_id}.yaml")
+        write_text(gate_task_path, gate_task_yaml)
+        send_two_step(session, role_pane, build_worker_command(quality_gate_worker_id))
+        print(
+            f"dispatch_log: role=quality-gate task_id={dispatch_task_id} worker={quality_gate_worker_id} pane={role_pane}",
+            file=sys.stderr,
+        )
+        sys.exit(0)
 
 for worker_id, pane in workers.items():
     task_path = os.path.join(queue_dir, "tasks", f"{worker_id}.yaml")
     task_id, status = read_task_status(task_path)
-    if not task_id or task_id == "null":
+    if not task_id:
         continue
     if status not in ("assigned", "in_progress"):
         continue
-    cmd = f'cd "{work_dir}" && "{orch_root}/scripts/yb_run_worker.sh" --repo "{repo_root}" --worker "{worker_id}"'
-    if session_id:
-        cmd += f' --session "{session_id}"'
-    subprocess.run(["tmux", "send-keys", "-t", f"{session}:{pane}", cmd], check=False)
-    subprocess.run(["tmux", "send-keys", "-t", f"{session}:{pane}", "Enter"], check=False)
+    send_two_step(session, pane, build_worker_command(worker_id))
 PY

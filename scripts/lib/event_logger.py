@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import fcntl
 import json
 import os
 import sys
@@ -103,6 +104,7 @@ class EventLogger:
 
         fd = os.open(self._events_filename, flags, 0o644, dir_fd=self._trusted_parent_fd)
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             total_written = 0
             while total_written < len(payload):
                 try:
@@ -125,7 +127,10 @@ class EventLogger:
                     raise zero_progress_error
                 total_written += written
         finally:
-            os.close(fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     def _append_with_retry(self, payload: bytes) -> None:
         last_error: Optional[OSError] = None

@@ -406,8 +406,8 @@ with open(path, "w", encoding="utf-8") as f:
   printf -v _q_orch_mode '%q' "$orch_mode"
   printf -v _q_orch_poll_interval '%q' "$orch_poll_interval_sec"
   printf -v _q_orch_state_dir '%q' "$_orch_state_dir"
-  printf -v _q_orch_script '%q' "$repo_root/scripts/yb_orchestrator.py"
-  _orch_cmd="export PATH=$_q_orch_bin:\$PATH && export YB_SESSION_ID=$_q_orch_session_id && export YB_PANES_PATH=$_q_orch_pane_map && export YB_QUEUE_DIR=$_q_orch_queue_dir && export YB_WORK_DIR=$_q_orch_work_dir && export YB_REPO_ROOT=$_q_orch_repo_root && cd $_q_orch_work_dir && python3 $_q_orch_script --repo $_q_orch_repo_root --session $_q_orch_session_id --mode $_q_orch_mode --poll-interval $_q_orch_poll_interval --state-dir $_q_orch_state_dir"
+  printf -v _q_orch_script '%q' "$work_dir/scripts/yb_orchestrator.py"
+  _orch_cmd="export PATH=$_q_orch_bin:\$PATH && export YB_SESSION_ID=$_q_orch_session_id && export YB_PANES_PATH=$_q_orch_pane_map && export YB_QUEUE_DIR=$_q_orch_queue_dir && export YB_WORK_DIR=$_q_orch_work_dir && export YB_REPO_ROOT=$_q_orch_repo_root && cd $_q_orch_work_dir && python3 $_q_orch_script --repo $_q_orch_work_dir --session $_q_orch_session_id --mode $_q_orch_mode --poll-interval $_q_orch_poll_interval --state-dir $_q_orch_state_dir"
   tmux send-keys -t "$session_name:$orchestrator_pane" "$_orch_cmd"
   tmux send-keys -t "$session_name:$orchestrator_pane" C-m
 

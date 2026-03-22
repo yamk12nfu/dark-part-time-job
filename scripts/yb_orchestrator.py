@@ -66,6 +66,7 @@ PROCESS_LOCK_DISPATCH_COLLECT = "dispatch_collect"
 PROCESS_LOCK_STATE_SAVE = "state_save"
 
 CAPTURE_PANE_RETRY_MAX = 2
+MAX_CAPTURE_LINES = 50
 COMMAND_RETRY_MAX = 2
 COMMAND_RETRY_SLEEP_SEC = 1.0
 PROCESS_LOCK_TIMEOUT_SEC = 10.0
@@ -708,7 +709,7 @@ def _phase_is_consistent(task_state: Optional[Dict[str, Any]], signal_dict: Dict
 
 
 def _capture_pane_tail(tmux_session: str, pane_id: str) -> Optional[str]:
-    cmd = ["tmux", "capture-pane", "-t", f"{tmux_session}:{pane_id}", "-p", "-S", "-20"]
+    cmd = ["tmux", "capture-pane", "-t", f"{tmux_session}:{pane_id}", "-p", "-S", f"-{MAX_CAPTURE_LINES}"]
     for attempt in range(1, CAPTURE_PANE_RETRY_MAX + 1):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -1829,6 +1830,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                             )
                             continue
 
+                        timestamp_provided = "ts_ms" in signal_for_validation or "ts" in signal_for_validation
                         normalized_signal = normalize_timestamp(signal_for_validation)
                         normalized_signal["pane_id"] = _to_text(normalized_signal.get("pane_id")) or pane_id
                         normalized_signal["role"] = role
@@ -1850,7 +1852,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         normalized_signal["ts_ms"] = ts_ms
 
                         task_pane_key = f"{task_id}:{normalized_signal['pane_id']}"
-                        if not sm.check_timestamp_guard(task_pane_key, ts_ms):
+                        if timestamp_provided and not sm.check_timestamp_guard(task_pane_key, ts_ms):
                             _log(
                                 "info",
                                 f"dropped signal by timestamp guard task={task_id} pane={pane_id} ts_ms={ts_ms}",
@@ -1865,7 +1867,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
                         task_state = sm.get_task_state(task_id)
                         if not _phase_is_consistent(task_state, normalized_signal):
-                            sm.update_timestamp(task_pane_key, ts_ms)
+                            if timestamp_provided:
+                                sm.update_timestamp(task_pane_key, ts_ms)
                             sm.add_processed_signal(sig_hash)
                             _safe_log_signal(logger, task_id, role, sig_hash, False)
                             _log(
@@ -1875,13 +1878,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                             continue
 
                         if mode == MODE_HYBRID and task_state is None:
-                            sm.update_timestamp(task_pane_key, ts_ms)
+                            if timestamp_provided:
+                                sm.update_timestamp(task_pane_key, ts_ms)
                             sm.add_processed_signal(sig_hash)
                             _safe_log_signal(logger, task_id, role, sig_hash, False)
                             _log("info", f"hybrid mode ignored unregistered task signal: {task_id}")
                             continue
 
-                        sm.update_timestamp(task_pane_key, ts_ms)
+                        if timestamp_provided:
+                            sm.update_timestamp(task_pane_key, ts_ms)
                         sm.add_processed_signal(sig_hash)
                         _safe_log_signal(logger, task_id, role, sig_hash, True)
 

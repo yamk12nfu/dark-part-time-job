@@ -92,18 +92,7 @@ def extract_last_json_object(text: str) -> Optional[dict]:
     """Extract the latest JSON object from the trailing pane text."""
     if not isinstance(text, str) or not text.strip():
         return None
-
-    lines = text.splitlines()
-    if not lines:
-        return _extract_json_object_from_text(text)
-
-    if len(lines) >= 5:
-        tail_count = min(20, len(lines))
-    else:
-        tail_count = len(lines)
-
-    tail_text = "\n".join(lines[-tail_count:])
-    return _extract_json_object_from_text(tail_text)
+    return _extract_json_object_from_text(text)
 
 
 def _require_status(signal_dict: Dict[str, Any], expected: str, role: str, mission: str, errors: List[str]) -> None:

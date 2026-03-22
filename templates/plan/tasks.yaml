@@ -11,6 +11,7 @@ requirements:
 tasks:
   - id: T-001
     owner: worker_001
+    routing_policy: "legacy"   # legacy | v2
     depends_on: []
     requirement_ids: [FR-1]
     deliverables: ["", ""]

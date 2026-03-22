@@ -54,6 +54,27 @@ if [ -z "$worker_count" ]; then
   worker_count=3
 fi
 
+# orchestrator 設定（未設定時: legacy / 5）
+orch_mode=$(awk '
+  /^[[:space:]]*orchestrator:[[:space:]]*$/ { in_orchestrator=1; next }
+  in_orchestrator && /^[^[:space:]]/ { in_orchestrator=0 }
+  in_orchestrator && /^[[:space:]]*mode:[[:space:]]*/ { print $2; exit }
+' "$config_file" | tr -d '"' | tr -d "'" || true)
+orch_poll_interval_sec=$(awk '
+  /^[[:space:]]*orchestrator:[[:space:]]*$/ { in_orchestrator=1; next }
+  in_orchestrator && /^[^[:space:]]/ { in_orchestrator=0 }
+  in_orchestrator && /^[[:space:]]*poll_interval_sec:[[:space:]]*/ { print $2; exit }
+' "$config_file" | tr -d '"' | tr -d "'" || true)
+orch_mode="${orch_mode:-legacy}"
+case "$orch_mode" in
+  legacy|hybrid|v2) ;;
+  *) orch_mode="legacy" ;;
+esac
+orch_poll_interval_sec="${orch_poll_interval_sec:-5}"
+if ! [[ "$orch_poll_interval_sec" =~ ^[0-9]+$ ]]; then
+  orch_poll_interval_sec=5
+fi
+
 # CLI binary preflight check
 for _check_role in oyabun waka worker; do
   _cli_bin=$(agent_get_cli_binary "$config_file" "$_check_role")
@@ -331,9 +352,77 @@ if [ -n "$worktree_root" ]; then
   fi
 fi
 
+printf -v _q_boot_bin '%q' "$ORCH_ROOT/bin"
+printf -v _q_boot_session_id '%q' "$session_id"
+printf -v _q_boot_pane_map '%q' "$pane_map"
+printf -v _q_boot_queue_dir '%q' "$queue_dir"
+printf -v _q_boot_work_dir '%q' "$work_dir"
+printf -v _q_boot_worktree_branch '%q' "$worktree_branch"
+printf -v _q_boot_repo_root '%q' "$repo_root"
+_bootstrap_cmd="export PATH=$_q_boot_bin:\$PATH && export YB_SESSION_ID=$_q_boot_session_id && export YB_PANES_PATH=$_q_boot_pane_map && export YB_QUEUE_DIR=$_q_boot_queue_dir && export YB_WORK_DIR=$_q_boot_work_dir && export YB_WORKTREE_BRANCH=$_q_boot_worktree_branch && export YB_REPO_ROOT=$_q_boot_repo_root && cd $_q_boot_work_dir && clear"
 for pane in $(tmux list-panes -t "$session_name":0 -F "#{pane_index}"); do
-  tmux send-keys -t "$session_name":0."$pane" "export PATH=\"$ORCH_ROOT/bin:\$PATH\" && export YB_SESSION_ID=\"$session_id\" && export YB_PANES_PATH=\"$pane_map\" && export YB_QUEUE_DIR=\"$queue_dir\" && export YB_WORK_DIR=\"$work_dir\" && export YB_WORKTREE_BRANCH=\"$worktree_branch\" && export YB_REPO_ROOT=\"$repo_root\" && cd \"$work_dir\" && clear" C-m
+  tmux send-keys -t "$session_name":0."$pane" "$_bootstrap_cmd" C-m
 done
+
+if [ "$orch_mode" = "hybrid" ] || [ "$orch_mode" = "v2" ]; then
+  orch_split_target=$(PANE_MAP="$pane_map" python3 - <<'PY'
+import json
+import os
+
+path = os.environ["PANE_MAP"]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+workers = data.get("workers") or {}
+print(workers.get("worker_001") or data.get("waka") or data.get("oyabun") or "0.0")
+PY
+)
+  orchestrator_pane=$(tmux split-window -v -P -F "#{window_index}.#{pane_index}" -t "$session_name:$orch_split_target" -c "$work_dir")
+  tmux select-pane -t "$session_name:$orchestrator_pane" -T "orchestrator" 2>/dev/null || true
+
+  python3 -c '
+import json
+import sys
+
+path = sys.argv[1]
+pane = sys.argv[2]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+data["orchestrator"] = pane
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+' "$pane_map" "$orchestrator_pane"
+
+  _orch_state_dir="$work_dir/.yamibaito/runtime"
+  _orch_state_file="$_orch_state_dir/orchestrator-state.json"
+  mkdir -p "$_orch_state_dir"
+  rm -f "$_orch_state_file"
+
+  printf -v _q_orch_bin '%q' "$ORCH_ROOT/bin"
+  printf -v _q_orch_session_id '%q' "$session_id"
+  printf -v _q_orch_pane_map '%q' "$pane_map"
+  printf -v _q_orch_queue_dir '%q' "$queue_dir"
+  printf -v _q_orch_work_dir '%q' "$work_dir"
+  printf -v _q_orch_repo_root '%q' "$repo_root"
+  printf -v _q_orch_mode '%q' "$orch_mode"
+  printf -v _q_orch_poll_interval '%q' "$orch_poll_interval_sec"
+  printf -v _q_orch_state_dir '%q' "$_orch_state_dir"
+  printf -v _q_orch_script '%q' "$work_dir/scripts/yb_orchestrator.py"
+  _orch_cmd="export PATH=$_q_orch_bin:\$PATH && export YB_SESSION_ID=$_q_orch_session_id && export YB_PANES_PATH=$_q_orch_pane_map && export YB_QUEUE_DIR=$_q_orch_queue_dir && export YB_WORK_DIR=$_q_orch_work_dir && export YB_REPO_ROOT=$_q_orch_repo_root && cd $_q_orch_work_dir && python3 $_q_orch_script --repo $_q_orch_work_dir --session $_q_orch_session_id --mode $_q_orch_mode --poll-interval $_q_orch_poll_interval --state-dir $_q_orch_state_dir"
+  tmux send-keys -t "$session_name:$orchestrator_pane" "$_orch_cmd"
+  tmux send-keys -t "$session_name:$orchestrator_pane" C-m
+
+  _orch_ready=false
+  for _ in $(seq 1 10); do
+    if [ -f "$_orch_state_file" ]; then
+      _orch_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$_orch_ready" != "true" ]; then
+    echo "WARNING: orchestrator readiness timeout (10s): $_orch_state_file" >&2
+  fi
+fi
 
 oyabun_pane=$(REPO_ROOT="$repo_root" PANE_MAP="$pane_map" python3 - <<'PY'
 import json

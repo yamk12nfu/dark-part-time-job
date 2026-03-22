@@ -557,14 +557,19 @@ def read_task_record(task_path):
 
 
 def find_task_record_by_id(tasks_dir, target_task_id):
+    fallback = None
     for task_path in sorted(glob.glob(os.path.join(tasks_dir, "*.yaml"))):
         try:
             record = read_task_record(task_path)
         except OSError:
             continue
         if to_text(record["task"].get("task_id")) == target_task_id:
-            return record
-    return None
+            phase = to_text(record["task"].get("phase")).lower()
+            if phase == "implement":
+                return record
+            if fallback is None:
+                fallback = record
+    return fallback
 
 
 def normalize_string_list(raw_values):
@@ -1244,9 +1249,6 @@ def resolve_quality_gate_worker(source_task):
         candidate = to_text(source_qg.get(key))
         if candidate:
             return candidate
-    reviewer_candidate = to_text(source_qg.get("reviewer_worker_id"))
-    if reviewer_candidate:
-        return reviewer_candidate
     assigned_to = to_text(source_task.get("assigned_to"))
     implementer = to_text(source_qg.get("implementer_worker_id"))
     if assigned_to and assigned_to != implementer:
@@ -1998,14 +2000,16 @@ if dispatch_role:
     if dispatch_role == "quality-gate":
         quality_gate_worker_id = resolve_quality_gate_worker(source_task)
         if not quality_gate_worker_id:
-            quality_gate_worker_id = to_text(report_hints.get("reviewer_worker_id"))
-        if not quality_gate_worker_id:
             quality_gate_pane = resolve_role_pane("quality_gate", "")
             if quality_gate_pane:
                 quality_gate_worker_id = resolve_worker_id_by_pane(quality_gate_pane)
         if not quality_gate_worker_id:
             fail(
-                "Missing quality-gate worker in task YAML/reports. Set task.quality_gate.reviewer_worker_id or dedicated quality-gate worker id."
+                "Missing dedicated quality-gate worker. Set task.quality_gate.quality_gate_worker_id or equivalent key."
+            )
+        if reviewer_worker_id and quality_gate_worker_id == reviewer_worker_id:
+            fail(
+                f"CONFLICT: reviewer ({reviewer_worker_id}) == quality-gate ({quality_gate_worker_id}). Assign a dedicated quality-gate worker."
             )
 
         role_pane = resolve_role_pane("quality_gate", quality_gate_worker_id)

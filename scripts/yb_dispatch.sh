@@ -117,6 +117,16 @@ if [ "$planner_mode" -eq 1 ] && [ -n "$task_id" ]; then
   exit 1
 fi
 
+if [ "$architect_done_mode" -eq 1 ] && [ -n "$role" ]; then
+  echo "Unknown arg: --role" >&2
+  exit 1
+fi
+
+if [ "$architect_done_mode" -eq 1 ] && [ -n "$task_id" ]; then
+  echo "Unknown arg: --task-id" >&2
+  exit 1
+fi
+
 if [ -n "$role" ] && [ "$role" != "reviewer" ] && [ "$role" != "quality-gate" ]; then
   echo "Invalid --role: $role (expected reviewer|quality-gate)" >&2
   exit 1
@@ -1260,16 +1270,12 @@ def find_report_record_for_quality_gate(reports_dir, source_task_id, reviewer_wo
     if not os.path.isdir(reports_dir):
         return None
 
-    candidate_paths = []
     if reviewer_worker_id:
-        candidate_paths.append(os.path.join(reports_dir, f"{reviewer_worker_id}_report.yaml"))
-    candidate_paths.extend(sorted(glob.glob(os.path.join(reports_dir, "*_report.yaml"))))
+        candidate_paths = [os.path.join(reports_dir, f"{reviewer_worker_id}_report.yaml")]
+    else:
+        candidate_paths = sorted(glob.glob(os.path.join(reports_dir, "*_report.yaml")))
 
-    seen = set()
     for report_path in candidate_paths:
-        if report_path in seen:
-            continue
-        seen.add(report_path)
         if not os.path.isfile(report_path):
             continue
         try:
@@ -1282,16 +1288,11 @@ def find_report_record_for_quality_gate(reports_dir, source_task_id, reviewer_wo
             report = {}
         review_target = to_text(report.get("review_target_task_id"))
         review_result = to_text(report.get("review_result"))
-        basename = os.path.basename(report_path)
-        reviewer_filename = f"{reviewer_worker_id}_report.yaml" if reviewer_worker_id else ""
         if source_task_id and review_target != source_task_id:
             continue
         if not review_result:
             continue
-        if reviewer_filename and basename == reviewer_filename:
-            return {"path": report_path, "content": content, "report": report}
-        if source_task_id and review_target == source_task_id:
-            return {"path": report_path, "content": content, "report": report}
+        return {"path": report_path, "content": content, "report": report}
     return None
 
 
@@ -2010,6 +2011,10 @@ if dispatch_role:
         if reviewer_worker_id and quality_gate_worker_id == reviewer_worker_id:
             fail(
                 f"CONFLICT: reviewer ({reviewer_worker_id}) == quality-gate ({quality_gate_worker_id}). Assign a dedicated quality-gate worker."
+            )
+        if implementer_worker_id and quality_gate_worker_id == implementer_worker_id:
+            fail(
+                f"CONFLICT: implementer ({implementer_worker_id}) == quality-gate ({quality_gate_worker_id}). Assign a dedicated quality-gate worker."
             )
 
         role_pane = resolve_role_pane("quality_gate", quality_gate_worker_id)

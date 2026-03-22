@@ -86,7 +86,7 @@ def _to_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _to_int(value: Any, default: int) -> int:
+def _to_int(value: Any, default: Optional[int]) -> Optional[int]:
     if isinstance(value, bool):
         return default
     try:
@@ -104,6 +104,16 @@ def _to_bool(value: Any, default: bool) -> bool:
     if text in {"false", "no", "0", "off"}:
         return False
     return default
+
+
+def _normalize_routing_policy(value: Any, default: str = MODE_LEGACY) -> str:
+    normalized_default = MODE_V2 if _to_text(default).lower() == MODE_V2 else MODE_LEGACY
+    text = _to_text(value).lower()
+    if text == MODE_V2:
+        return MODE_V2
+    if text == MODE_LEGACY:
+        return MODE_LEGACY
+    return normalized_default
 
 
 def _strip_inline_comment(value: str) -> str:
@@ -549,8 +559,12 @@ def _read_task_header(task_path: str) -> Dict[str, Any]:
         "parent_cmd_id": "",
         "assigned_to": "",
         "needs_architect": False,
+        "routing_policy": MODE_LEGACY,
         "status": "",
     }
+    routing_policy_explicit = False
+    routing_policy_raw = ""
+    routing_policy_valid = True
     try:
         with open(task_path, "r", encoding="utf-8") as fh:
             for raw_line in fh:
@@ -564,6 +578,10 @@ def _read_task_header(task_path: str) -> Dict[str, Any]:
                 if key not in parsed:
                     continue
                 parsed[key] = _parse_yaml_scalar(raw_value)
+                if key == "routing_policy":
+                    routing_policy_explicit = True
+                    routing_policy_raw = _to_text(parsed.get("routing_policy"))
+                    routing_policy_valid = routing_policy_raw.lower() in {MODE_LEGACY, MODE_V2}
     except OSError as exc:
         _log("warn", f"failed to read task YAML '{task_path}': {exc}")
     parsed["task_id"] = _to_text(parsed.get("task_id"))
@@ -571,7 +589,18 @@ def _read_task_header(task_path: str) -> Dict[str, Any]:
     parsed["assigned_to"] = _to_text(parsed.get("assigned_to"))
     parsed["status"] = _to_text(parsed.get("status")).lower()
     parsed["needs_architect"] = _to_bool(parsed.get("needs_architect"), False)
+    parsed["routing_policy"] = _normalize_routing_policy(parsed.get("routing_policy"), MODE_LEGACY)
+    parsed["routing_policy_explicit"] = routing_policy_explicit
+    parsed["routing_policy_raw"] = routing_policy_raw
+    parsed["routing_policy_valid"] = routing_policy_valid
     return parsed
+
+
+def _read_task_metadata(queue_dir: str, task_id: str, assigned_worker: str) -> Dict[str, Any]:
+    task_path = _find_worker_task_path(queue_dir, task_id, assigned_worker)
+    if not task_path:
+        return {}
+    return _read_task_header(task_path)
 
 
 def _collect_tasks_for_cmd(queue_dir: str, cmd_id: str) -> List[Dict[str, Any]]:
@@ -945,12 +974,21 @@ def _apply_transition(
     if role == ROLE_PLANNER and mission == "completed" and status == STATUS_TASKS_READY:
         task_entries = _collect_tasks_for_cmd(queue_dir, cmd_id)
         if not task_entries and task_id:
+            _log(
+                "warn",
+                (
+                    "planner tasks_ready fallback created synthetic task entry with "
+                    f"legacy routing (fail-closed): cmd_id={cmd_id} task_id={task_id}"
+                ),
+            )
             task_entries = [
                 {
                     "task_id": task_id,
                     "parent_cmd_id": cmd_id,
                     "assigned_to": assigned_worker,
                     "needs_architect": _to_bool(signal_dict.get("needs_architect"), False),
+                    "routing_policy": MODE_LEGACY,
+                    "routing_policy_explicit": False,
                     "status": "assigned",
                 }
             ]
@@ -961,7 +999,31 @@ def _apply_transition(
             if not target_task_id:
                 continue
             entry_state = sm.get_task_state(target_task_id) or {}
-            if mode == MODE_HYBRID and not entry_state:
+            entry_routing_policy = _normalize_routing_policy(
+                entry.get("routing_policy"),
+                _normalize_routing_policy(entry_state.get("routing_policy"), MODE_LEGACY),
+            )
+            entry_routing_policy_explicit = _to_bool(entry.get("routing_policy_explicit"), False)
+            entry_routing_policy_raw = _to_text(entry.get("routing_policy_raw"))
+            entry_routing_policy_valid = _to_bool(entry.get("routing_policy_valid"), True)
+            if mode == MODE_HYBRID and entry_routing_policy != MODE_V2:
+                if not entry_routing_policy_explicit:
+                    _log(
+                        "warn",
+                        (
+                            "hybrid routing fallback kept legacy (skip) for "
+                            f"task_id={target_task_id}: routing_policy is missing"
+                        ),
+                    )
+                elif not entry_routing_policy_valid:
+                    invalid_policy = entry_routing_policy_raw or _to_text(entry.get("routing_policy"))
+                    _log(
+                        "warn",
+                        (
+                            "hybrid routing fallback kept legacy (skip) for "
+                            f"task_id={target_task_id}: invalid routing_policy='{invalid_policy}'"
+                        ),
+                    )
                 continue
 
             target_worker = _to_text(entry.get("assigned_to")) or _to_text(entry_state.get("assigned_worker"))
@@ -984,7 +1046,7 @@ def _apply_transition(
                 role=ROLE_PLANNER,
                 signal_dict=signal_dict,
                 cmd_id=entry_cmd_id,
-                extra={"review_input_error_count": 0},
+                extra={"review_input_error_count": 0, "routing_policy": entry_routing_policy},
             )
             dispatched_task_ids.append(target_task_id)
         if dispatched_task_ids:
@@ -1830,7 +1892,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                             )
                             continue
 
-                        timestamp_provided = "ts_ms" in signal_for_validation or "ts" in signal_for_validation
                         normalized_signal = normalize_timestamp(signal_for_validation)
                         normalized_signal["pane_id"] = _to_text(normalized_signal.get("pane_id")) or pane_id
                         normalized_signal["role"] = role
@@ -1846,8 +1907,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                             )
                             continue
 
-                        ts_ms = _to_int(normalized_signal.get("ts_ms"), 0)
-                        if ts_ms < 0:
+                        ts_ms = _to_int(normalized_signal.get("ts_ms"), None)
+                        timestamp_provided = ts_ms is not None and ts_ms > 0
+                        if ts_ms is None or ts_ms < 0:
                             ts_ms = 0
                         normalized_signal["ts_ms"] = ts_ms
 
@@ -1878,12 +1940,43 @@ def main(argv: Optional[List[str]] = None) -> int:
                             continue
 
                         if mode == MODE_HYBRID and task_state is None:
-                            if timestamp_provided:
-                                sm.update_timestamp(task_pane_key, ts_ms)
-                            sm.add_processed_signal(sig_hash)
-                            _safe_log_signal(logger, task_id, role, sig_hash, False)
-                            _log("info", f"hybrid mode ignored unregistered task signal: {task_id}")
-                            continue
+                            signal_worker = _to_text(normalized_signal.get("worker_id")) or _worker_from_pane(
+                                panes,
+                                pane_id,
+                            )
+                            task_meta = _read_task_metadata(queue_dir, task_id, signal_worker)
+                            task_routing_policy = _normalize_routing_policy(
+                                task_meta.get("routing_policy"),
+                                MODE_LEGACY,
+                            )
+                            if task_routing_policy == MODE_V2:
+                                initial_worker = _to_text(task_meta.get("assigned_to")) or signal_worker
+                                initial_phase = (
+                                    "design" if _to_bool(task_meta.get("needs_architect"), False) else "implement"
+                                )
+                                initial_cmd_id = (
+                                    _to_text(task_meta.get("parent_cmd_id"))
+                                    or _to_text(normalized_signal.get("cmd_id"))
+                                    or _derive_cmd_id(task_id)
+                                )
+                                if not initial_cmd_id:
+                                    initial_cmd_id = "unknown_cmd"
+                                sm.update_task_state(
+                                    task_id,
+                                    phase=initial_phase,
+                                    loop_count=0,
+                                    assigned_worker=initial_worker,
+                                    cmd_id=initial_cmd_id,
+                                    routing_policy=task_routing_policy,
+                                )
+                                task_state = sm.get_task_state(task_id)
+                            else:
+                                if timestamp_provided:
+                                    sm.update_timestamp(task_pane_key, ts_ms)
+                                sm.add_processed_signal(sig_hash)
+                                _safe_log_signal(logger, task_id, role, sig_hash, False)
+                                _log("info", f"hybrid mode ignored unregistered task signal: {task_id}")
+                                continue
 
                         if timestamp_provided:
                             sm.update_timestamp(task_pane_key, ts_ms)

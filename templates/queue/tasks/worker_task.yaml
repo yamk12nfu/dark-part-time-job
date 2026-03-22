@@ -5,6 +5,7 @@ task:
   assigned_to: "{{WORKER_ID}}"
   assigned_at: ""
   status: idle
+  routing_policy: "legacy"
 
   title: ""
   description: ""

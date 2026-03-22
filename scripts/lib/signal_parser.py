@@ -62,7 +62,9 @@ def _collect_json_object_ranges(text: str) -> List[Tuple[int, int]]:
             continue
 
         if ch == "}" and stack:
-            ranges.append((stack.pop(), idx))
+            start_idx = stack.pop()
+            if not stack:
+                ranges.append((start_idx, idx))
 
     return ranges
 
@@ -75,15 +77,15 @@ def _extract_json_object_from_text(text: str) -> Optional[dict]:
     if not ranges:
         return None
 
-    start_idx, end_idx = ranges[-1]
-    candidate = text[start_idx : end_idx + 1]
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
+    for start_idx, end_idx in reversed(ranges):
+        candidate = text[start_idx : end_idx + 1]
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
 
-    if isinstance(parsed, dict):
-        return parsed
+        if isinstance(parsed, dict):
+            return parsed
 
     return None
 
